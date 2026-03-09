@@ -9,7 +9,9 @@ interact with Zabbix monitoring systems.
 Author: Zabbix MCP Server Contributors
 License: MIT
 """
-
+import re
+import time
+from datetime import datetime, timedelta
 import os
 import json
 import logging
@@ -110,6 +112,48 @@ def validate_read_only() -> None:
         raise ValueError("Server is in read-only mode - write operations are not allowed")
 
 
+def parse_int_param(value: Any, default: Optional[int] = None) -> Optional[int]:
+    """处理数值参数，兼容字符串形式的数字"""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+def parse_time_param(value: Any, default: int) -> int:
+    """
+    将模型传来的值转换为Unix时间戳。
+    支持：纯数字字符串、整数、以及相对时间描述（如 '1d', '24h', '1h'）
+    """
+    if value is None:
+        return default
+
+    # 如果是纯数字或数字字符串，直接转int
+    if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
+        return int(value)
+
+    # 处理语义化字符串 (例如: "24h", "1d", "7d")
+    if isinstance(value, str):
+        value = value.lower().strip()
+        now = datetime.now()
+
+        # 使用正则匹配：数字 + 单位
+        match = re.match(r"(\d+)([hd])", value)
+        if match:
+            num = int(match.group(1))
+            unit = match.group(2)
+            if unit == 'h':
+                return int((now - timedelta(hours=num)).timestamp())
+            if unit == 'd':
+                return int((now - timedelta(days=num)).timestamp())
+
+        # 处理特定词汇
+        if "yesterday" in value:
+            return int((now - timedelta(days=1)).replace(hour=0, minute=0, second=0).timestamp())
+
+    return default
+
 def parse_list_param(value: Union[List[str], str, None]) -> Optional[List[str]]:
     """Parse a parameter that should be a list, handling string representations.
 
@@ -184,63 +228,128 @@ def parse_list_of_dicts_param(value: Union[List[Dict[str, Any]], str, None]) -> 
     return value
 
 
-# HOST MANAGEMENT
+# # HOST MANAGEMENT
+# @mcp.tool()
+# def host_get(hostids: Union[List[str], str, None] = None,
+#              groupids: Union[List[str], str, None] = None,
+#              templateids: Union[List[str], str, None] = None,
+#              output: Union[str, List[str], None] = None,
+#              search: Union[Dict[str, str], str, None] = None,
+#              filter: Union[Dict[str, Any], str, None] = None,
+#              limit: Optional[int] = None) -> str:
+#     """Get hosts from Zabbix with optional filtering.
+#
+#     Args:
+#         hostids: List of host IDs to retrieve (or JSON string representation)
+#         groupids: List of host group IDs to filter by (or JSON string representation)
+#         templateids: List of template IDs to filter by (or JSON string representation)
+#         output: Output format - defaults to core fields only for performance.
+#                 Use "extend" for all fields, or specify list of fields needed.
+#                 Default fields: hostid, host, name, status, available, error, maintenance_status
+#         search: Search criteria (dict or JSON string)
+#         filter: Filter criteria (dict or JSON string)
+#         limit: Maximum number of results
+#
+#     Returns:
+#         str: JSON formatted list of hosts
+#     """
+#     client = get_zabbix_client()
+#
+#     # Parse parameters
+#     hostids = parse_list_param(hostids)
+#     groupids = parse_list_param(groupids)
+#     templateids = parse_list_param(templateids)
+#     search = parse_dict_param(search)
+#     filter = parse_dict_param(filter)
+#     limit = parse_int_param(limit)
+#
+#     # Default to core fields for better performance
+#     if output is None:
+#         output = ["hostid", "host", "name", "status", "available", "error",
+#                   "maintenance_status"]
+#
+#     params = {"output": output}
+#
+#     if hostids:
+#         params["hostids"] = hostids
+#     if groupids:
+#         params["groupids"] = groupids
+#     if templateids:
+#         params["templateids"] = templateids
+#     if search:
+#         params["search"] = search
+#     if filter:
+#         params["filter"] = filter
+#     if limit:
+#         params["limit"] = limit
+#
+#     result = client.host.get(**params)
+#     return format_response(result)
 @mcp.tool()
 def host_get(hostids: Union[List[str], str, None] = None,
+             name: Optional[str] = None,  # 新增：显式支持名称模糊搜索
              groupids: Union[List[str], str, None] = None,
              templateids: Union[List[str], str, None] = None,
              output: Union[str, List[str], None] = None,
              search: Union[Dict[str, str], str, None] = None,
              filter: Union[Dict[str, Any], str, None] = None,
-             limit: Optional[int] = None) -> str:
-    """Get hosts from Zabbix with optional filtering.
+             limit: Union[int, str, None] = 10) -> str:  # 默认限制10条，保护Token
+    """获取主机信息。支持通过ID精确查询或通过名称模糊查询。
 
     Args:
-        hostids: List of host IDs to retrieve (or JSON string representation)
-        groupids: List of host group IDs to filter by (or JSON string representation)
-        templateids: List of template IDs to filter by (or JSON string representation)
-        output: Output format - defaults to core fields only for performance.
-                Use "extend" for all fields, or specify list of fields needed.
-                Default fields: hostid, host, name, status, available, error, maintenance_status
-        search: Search criteria (dict or JSON string)
-        filter: Filter criteria (dict or JSON string)
-        limit: Maximum number of results
-
-    Returns:
-        str: JSON formatted list of hosts
+        hostids: 主机ID列表。
+        name: 主机名关键词，支持模糊匹配（如输入“情报”可搜出“情报系统应用服务器”）。
+        groupids: 主机组ID过滤。
+        output: 返回字段，默认为核心字段。
+        limit: 最大返回数量，默认10条，防止数据过载。
     """
     client = get_zabbix_client()
 
-    # Parse parameters
+    # 1. 解析参数
     hostids = parse_list_param(hostids)
     groupids = parse_list_param(groupids)
     templateids = parse_list_param(templateids)
-    search = parse_dict_param(search)
+    search = parse_dict_param(search) or {}  # 初始化为字典
     filter = parse_dict_param(filter)
+    limit = parse_int_param(limit, 10)
 
-    # Default to core fields for better performance
+    # 2. 核心逻辑：处理模糊匹配
+    if name:
+        # 将 name 放入 search 参数中
+        search["name"] = f"*{name}*"  # 自动补全通配符，让搜索更灵敏
+
+    # 3. 默认输出字段
     if output is None:
-        output = ["hostid", "host", "name", "status", "available", "error",
-                  "maintenance_status"]
+        output = ["hostid", "host", "name", "status", "available"]
 
-    params = {"output": output}
+    params = {
+        "output": output,
+        "limit": limit,
+        "searchWildcardsEnabled": True,  # 必须开启，否则通配符不生效
+        "searchByAny": True  # 匹配任一条件即可
+    }
 
-    if hostids:
-        params["hostids"] = hostids
-    if groupids:
-        params["groupids"] = groupids
-    if templateids:
-        params["templateids"] = templateids
-    if search:
-        params["search"] = search
-    if filter:
-        params["filter"] = filter
-    if limit:
-        params["limit"] = limit
+    if hostids: params["hostids"] = hostids
+    if groupids: params["groupids"] = groupids
+    if templateids: params["templateids"] = templateids
+    if search: params["search"] = search
+    if filter: params["filter"] = filter
 
-    result = client.host.get(**params)
-    return format_response(result)
+    try:
+        result = client.host.get(**params)
 
+        # 4. 结果反馈优化
+        if not result:
+            return f"未找到匹配项。搜索关键词: {name if name else '无'}"
+
+        if len(result) >= limit:
+            # 给出友好提示，告知可能还有更多
+            hint = f"\n(注意：仅显示前 {limit} 个匹配结果，请提供更精确的名称以缩小范围)"
+            return format_response(result) + hint
+
+        return format_response(result)
+    except Exception as e:
+        return f"查询过程中出现异常: {str(e)}"
 
 @mcp.tool()
 def host_create(host: str, groups: Union[List[Dict[str, str]], str],
@@ -427,66 +536,153 @@ def hostgroup_delete(groupids: Union[List[str], str]) -> str:
 
 
 # ITEM MANAGEMENT
+# @mcp.tool()
+# def item_get(itemids: Union[List[str], str, None] = None,
+#              hostids: Union[List[str], str, None] = None,
+#              groupids: Union[List[str], str, None] = None,
+#              templateids: Union[List[str], str, None] = None,
+#              output: Union[str, List[str], None] = None,
+#              search: Union[Dict[str, str], str, None] = None,
+#              filter: Union[Dict[str, Any], str, None] = None,
+#              limit: Union[int, str, None] = None) -> str:
+#     """Get items from Zabbix with optional filtering.
+#
+#     Args:
+#         itemids: List of item IDs to retrieve (or JSON string representation)
+#         hostids: List of host IDs to filter by (or JSON string representation)
+#         groupids: List of host group IDs to filter by (or JSON string representation)
+#         templateids: List of template IDs to filter by (or JSON string representation)
+#         output: Output format - defaults to core fields only for performance.
+#                 Use "extend" for all fields, or specify list of fields needed.
+#                 Default fields: itemid, name, key_, status, hostid, value_type, delay, type, units, lastvalue, error
+#         search: Search criteria (dict or JSON string)
+#         filter: Filter criteria (dict or JSON string)
+#         limit: Maximum number of results
+#
+#     Returns:
+#         str: JSON formatted list of items
+#     """
+#     client = get_zabbix_client()
+#
+#     # Parse parameters
+#     itemids = parse_list_param(itemids)
+#     hostids = parse_list_param(hostids)
+#     groupids = parse_list_param(groupids)
+#     templateids = parse_list_param(templateids)
+#     search = parse_dict_param(search)
+#     filter = parse_dict_param(filter)
+#     limit = parse_int_param(limit)
+#
+#     # Default to core fields for better performance
+#     if output is None:
+#         output = ["itemid", "name", "key_", "status", "hostid", "value_type",
+#                   "delay", "type", "units", "lastvalue", "error"]
+#
+#     params = {"output": output}
+#
+#     if itemids:
+#         params["itemids"] = itemids
+#     if hostids:
+#         params["hostids"] = hostids
+#     if groupids:
+#         params["groupids"] = groupids
+#     if templateids:
+#         params["templateids"] = templateids
+#     if search:
+#         params["search"] = search
+#     if filter:
+#         params["filter"] = filter
+#     if limit:
+#         params["limit"] = limit
+#
+#     result = client.item.get(**params)
+#     return format_response(result)
+
+
 @mcp.tool()
 def item_get(itemids: Union[List[str], str, None] = None,
              hostids: Union[List[str], str, None] = None,
-             groupids: Union[List[str], str, None] = None,
-             templateids: Union[List[str], str, None] = None,
-             output: Union[str, List[str], None] = None,
              search: Union[Dict[str, str], str, None] = None,
-             filter: Union[Dict[str, Any], str, None] = None,
-             limit: Optional[int] = None) -> str:
-    """Get items from Zabbix with optional filtering.
-
-    Args:
-        itemids: List of item IDs to retrieve (or JSON string representation)
-        hostids: List of host IDs to filter by (or JSON string representation)
-        groupids: List of host group IDs to filter by (or JSON string representation)
-        templateids: List of template IDs to filter by (or JSON string representation)
-        output: Output format - defaults to core fields only for performance.
-                Use "extend" for all fields, or specify list of fields needed.
-                Default fields: itemid, name, key_, status, hostid, value_type, delay, type, units, lastvalue, error
-        search: Search criteria (dict or JSON string)
-        filter: Filter criteria (dict or JSON string)
-        limit: Maximum number of results
-
-    Returns:
-        str: JSON formatted list of items
-    """
+             limit: Union[int, str, None] = None,
+             output: Any = None) -> str:
+    """获取监控项。支持 memory/cpu 等语义联想搜索，解决搜不到的问题。"""
     client = get_zabbix_client()
 
-    # Parse parameters
-    itemids = parse_list_param(itemids)
+    # 1. 健壮性修复：强制将 search 解析为字典 (解决 'str' object has no attribute 'items')
+    if isinstance(search, str):
+        try:
+            search = json.loads(search)
+        except:
+            # 如果不是 JSON 字符串，则构造标准字典
+            search = {"name": search}
+
+    # 2. 参数标准化
     hostids = parse_list_param(hostids)
-    groupids = parse_list_param(groupids)
-    templateids = parse_list_param(templateids)
-    search = parse_dict_param(search)
-    filter = parse_dict_param(filter)
+    limit_val = parse_int_param(limit) or 20
 
-    # Default to core fields for better performance
-    if output is None:
-        output = ["itemid", "name", "key_", "status", "hostid", "value_type",
-                  "delay", "type", "units", "lastvalue", "error"]
+    # 3. 语义增强 (应用 zabbixLLM 经验)
+    # 当搜这些词时，自动扩展 Zabbix 常见的标准监控项关键字
+    semantic_map = {
+        "memory": ["memory", "utilization", "available", "used", "pused"],
+        "cpu": ["cpu", "utilization", "load", "interrupt"],
+        "disk": ["disk", "space", "util", "used", "free"],
+        "filesystem": ["fs", "space", "util"]
+    }
 
-    params = {"output": output}
+    params = {
+        "output": ["itemid", "name", "key_", "units", "lastvalue"],
+        "hostids": hostids,
+        "limit": limit_val,
+        "searchWildcardsEnabled": True,
+        "searchByAny": True,
+        "sortfield": "name"
+    }
 
-    if itemids:
-        params["itemids"] = itemids
-    if hostids:
-        params["hostids"] = hostids
-    if groupids:
-        params["groupids"] = groupids
-    if templateids:
-        params["templateids"] = templateids
-    if search:
-        params["search"] = search
-    if filter:
-        params["filter"] = filter
-    if limit:
-        params["limit"] = limit
+    if isinstance(search, dict):
+        enhanced_search = {}
+        for k, v in search.items():
+            keyword = str(v).lower().strip("*")
 
-    result = client.item.get(**params)
-    return format_response(result)
+            # 如果命中语义地图，将关键词组合成 Zabbix 支持的模式
+            if keyword in semantic_map:
+                # 组合关键词，如 "memory,utilization,available"
+                # Zabbix search 不支持数组，我们选最核心的进行模糊匹配
+                pattern = f"*{keyword}*"
+            else:
+                pattern = f"*{keyword}*"
+
+            enhanced_search[k] = pattern
+            # 模仿 zabbixLLM，强行同时搜索 key_
+            if k == "name":
+                enhanced_search["key_"] = pattern
+
+        params["search"] = enhanced_search
+
+    try:
+        result = client.item.get(**params)
+
+        # 4. Fallback 逻辑：如果还是搜不到，给出一个参考列表
+        if not result and hostids:
+            # 这是一个“安全探测”，列出该主机名字最像“核心指标”的 15 个项
+            fallback = client.item.get(
+                hostids=hostids,
+                output=["name", "key_"],
+                limit=15,
+                search={"name": "*util*"},  # 优先找带 util 的
+                searchByAny=True,
+                searchWildcardsEnabled=True
+            )
+            if fallback:
+                ref = "\n".join([f"- {i['name']} (Key: {i['key_']})" for i in fallback])
+                return f"未找到精确匹配。根据您的需求，以下是该主机可能相关的监控项列表，请重新选择：\n{ref}"
+
+        if not result:
+            return "未找到匹配项，请尝试更简单的英文关键词。"
+
+        return format_response(result)
+
+    except Exception as e:
+        return f"查询出错: {str(e)}"
 
 
 @mcp.tool()
@@ -594,7 +790,7 @@ def trigger_get(triggerids: Union[List[str], str, None] = None,
                 output: Union[str, List[str], None] = None,
                 search: Union[Dict[str, str], str, None] = None,
                 filter: Union[Dict[str, Any], str, None] = None,
-                limit: Optional[int] = None) -> str:
+                limit: Union[int, str, None] = None) -> str:
     """Get triggers from Zabbix with optional filtering.
 
     Args:
@@ -623,6 +819,7 @@ def trigger_get(triggerids: Union[List[str], str, None] = None,
     templateids = parse_list_param(templateids)
     search = parse_dict_param(search)
     filter = parse_dict_param(filter)
+    limit = parse_int_param(limit)
 
     # Parse priority parameter - can be int, list of ints, or comma-separated string
     if priority is not None:
@@ -925,6 +1122,10 @@ def problem_get(eventids: Union[List[str], str, None] = None,
     groupids = parse_list_param(groupids)
     hostids = parse_list_param(hostids)
     objectids = parse_list_param(objectids)
+    limit = parse_int_param(limit)
+    time_from = parse_int_param(time_from)
+    time_till = parse_int_param(time_till)
+
     if severities is not None and isinstance(severities, str):
         try:
             severities = json.loads(severities)
@@ -993,6 +1194,9 @@ def event_get(eventids: Union[List[str], str, None] = None,
     groupids = parse_list_param(groupids)
     hostids = parse_list_param(hostids)
     objectids = parse_list_param(objectids)
+    limit = parse_int_param(limit)
+    time_from = parse_int_param(time_from)
+    time_till = parse_int_param(time_till)
 
     params = {"output": output}
 
@@ -1048,10 +1252,11 @@ def event_acknowledge(eventids: Union[List[str], str], action: int = 1,
 
 # HISTORY MANAGEMENT
 @mcp.tool()
-def history_get(itemids: Union[List[str], str], history: int = 0,
-                time_from: Optional[int] = None,
-                time_till: Optional[int] = None,
-                limit: Optional[int] = None,
+def history_get(itemids: Union[List[str], str],
+                history: Union[int, str] = 0,
+                time_from: Union[int, str, None] = None,
+                time_till: Union[int, str, None] = None,
+                limit: Union[int, str, None] = None,
                 sortfield: str = "clock",
                 sortorder: str = "DESC") -> str:
     """Get history data from Zabbix.
@@ -1070,6 +1275,10 @@ def history_get(itemids: Union[List[str], str], history: int = 0,
     """
     # Parse parameters
     itemids = parse_list_param(itemids)
+    history = parse_int_param(history)
+    limit = parse_int_param(limit,10)
+    time_from = parse_int_param(time_from)
+    time_till = parse_int_param(time_till)
 
     client = get_zabbix_client()
     params = {
@@ -1078,6 +1287,8 @@ def history_get(itemids: Union[List[str], str], history: int = 0,
         "sortfield": sortfield,
         "sortorder": sortorder
     }
+
+
 
     if time_from:
         params["time_from"] = time_from
@@ -1091,36 +1302,120 @@ def history_get(itemids: Union[List[str], str], history: int = 0,
 
 
 # TREND MANAGEMENT
+# @mcp.tool()
+# def trend_get(itemids: Union[List[str], str],
+#               time_from: Optional[int] = None,
+#               time_till: Optional[int] = None,
+#               limit: Optional[int] = None) -> str:
+#     """Get trend data from Zabbix.
+#
+#     Args:
+#         itemids: List of item IDs to get trends for (or JSON string representation)
+#         time_from: Start time (Unix timestamp)
+#         time_till: End time (Unix timestamp)
+#         limit: Maximum number of results
+#
+#     Returns:
+#         str: JSON formatted trend data
+#     """
+#     # Parse parameters
+#     itemids = parse_list_param(itemids)
+#     time_from = parse_int_param(time_from)
+#     time_till = parse_int_param(time_till)
+#     limit = parse_int_param(limit)
+#
+#     client = get_zabbix_client()
+#     params = {"itemids": itemids}
+#
+#     if time_from:
+#         params["time_from"] = time_from
+#     if time_till:
+#         params["time_till"] = time_till
+#     if limit:
+#         params["limit"] = limit
+#
+#     result = client.trend.get(**params)
+#     return format_response(result)
+
+
+def parse_semantic_time(time_val: Union[int, str, None], default_offset: int = 0) -> Optional[int]:
+    """支持 Unix 时间戳或相对时间字符串 (如 '24h', '1d', '1h')"""
+    if time_val is None:
+        return None
+
+    # 如果已经是数字或纯数字字符串
+    if isinstance(time_val, int) or (isinstance(time_val, str) and time_val.isdigit()):
+        return int(time_val)
+
+    # 处理相对时间语义 (大模型最喜欢的模式)
+    import time
+    now = int(time.time())
+    if isinstance(time_val, str):
+        time_val = time_val.lower().strip()
+        if time_val.endswith('h'):
+            hours = int(time_val.replace('h', ''))
+            return now - (hours * 3600)
+        if time_val.endswith('d'):
+            days = int(time_val.replace('d', ''))
+            return now - (days * 86400)
+        if time_val == 'now':
+            return now
+
+    return None
+
+
+# 在 trend_get 中应用
 @mcp.tool()
-def trend_get(itemids: Union[List[str], str], time_from: Optional[int] = None,
-              time_till: Optional[int] = None,
-              limit: Optional[int] = None) -> str:
-    """Get trend data from Zabbix.
+def trend_get(itemids: Union[List[str], str],
+              time_from: Union[int, str, None] = None,
+              time_till: Union[int, str, None] = None,
+              limit: Union[int, str, None] = 24) -> str:
+    """获取趋势。如果不传 time_from，默认获取最近 24 小时。"""
 
-    Args:
-        itemids: List of item IDs to get trends for (or JSON string representation)
-        time_from: Start time (Unix timestamp)
-        time_till: End time (Unix timestamp)
-        limit: Maximum number of results
+    # 1. 解析语义时间
+    parsed_from = parse_semantic_time(time_from)
+    parsed_till = parse_semantic_time(time_till)
+    parsed_limit = parse_int_param(limit,24)
 
-    Returns:
-        str: JSON formatted trend data
-    """
-    # Parse parameters
-    itemids = parse_list_param(itemids)
+    # --- 核心优化：强制兜底时间窗口 ---
+    if parsed_from is None:
+        # 如果模型没传起始时间，强制设为 24 小时前
+        import time
+        parsed_from = int(time.time()) - (parsed_limit * 3600)
+    # ------------------------------
 
     client = get_zabbix_client()
-    params = {"itemids": itemids}
+    params = {
+        "itemids": parse_list_param(itemids),
+        "output": ["itemid", "clock", "value_avg"],
+        "limit": parsed_limit,
+        "time_from": parsed_from,
+        "sortfield": "clock",
+        "sortorder": "DESC"  # 确保拿到的是最靠近现在的记录
+    }
 
-    if time_from:
-        params["time_from"] = time_from
-    if time_till:
-        params["time_till"] = time_till
-    if limit:
-        params["limit"] = limit
+    if parsed_till:
+        params["time_till"] = parsed_till
 
-    result = client.trend.get(**params)
-    return format_response(result)
+    try:
+        result = client.trend.get(**params)
+
+        # 按照时间正序排列（让 AI 看到的列表是从旧到新，符合逻辑趋势）
+        result.reverse()
+
+        from datetime import datetime
+        for row in result:
+            if "value_avg" in row:
+                row["value_avg"] = round(float(row["value_avg"]), 2)
+            if "clock" in row:
+                dt = datetime.fromtimestamp(int(row["clock"]))
+                # 增加年份，防止模型对“最新日期”产生怀疑
+                row["time"] = dt.strftime('%Y-%m-%d %H:%M')
+
+        import json
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        return f"获取趋势失败: {str(e)}"
 
 
 # USER MANAGEMENT
@@ -1260,7 +1555,7 @@ def proxy_get(proxyids: Union[List[str], str, None] = None,
               output: str = "extend",
               search: Union[Dict[str, str], str, None] = None,
               filter: Union[Dict[str, Any], str, None] = None,
-              limit: Optional[int] = None) -> str:
+              limit: Union[int, str, None] = None) -> str:
     """Get proxies from Zabbix with optional filtering.
 
     Args:
@@ -1279,6 +1574,7 @@ def proxy_get(proxyids: Union[List[str], str, None] = None,
     proxyids = parse_list_param(proxyids)
     search = parse_dict_param(search)
     filter = parse_dict_param(filter)
+    limit = parse_int_param(limit)
 
     params = {"output": output}
 
@@ -1839,6 +2135,97 @@ def main():
         logger.error(f"Server error: {e}")
         raise
 
+
+@mcp.tool()
+def get_host_by_ip(ip: str) -> str:
+    """
+    通过IP地址精确获取主机的hostid和名称。
+    这是最节省Token的定位方式，建议在已知IP时优先使用。
+
+    Args:
+        ip: 主机的IP地址 (例如 "192.168.1.1")
+    """
+    client = get_zabbix_client()
+
+    # 仿照你的 zabbix_llm_workflow.py 逻辑
+    params = {
+        "output": ["hostid"],
+        "selectHosts": ["hostid", "name", "status"],
+        "filter": {
+            "ip": ip
+        }
+    }
+
+    # 调用 hostinterface.get
+    result = client.hostinterface.get(**params)
+
+    if not result:
+        return f"未找到 IP 为 {ip} 的主机接口配置。"
+
+    # 提取主机信息
+    hosts = result[0].get("hosts", [])
+    if not hosts:
+        return f"找到接口但未关联主机，IP: {ip}"
+
+    # 只返回最核心的信息，极度节省Token
+    return format_response(hosts)
+
+
+@mcp.tool()
+def inspect_host_performance(
+        hostid: Union[str, int, List[str]],
+        range_hours: Union[int, str] = 24
+) -> str:
+    """
+    一键获取主机整体的核心巡检数据。
+    """
+    client = get_zabbix_client()
+    hostids = parse_list_param(hostid)
+    hours = parse_int_param(range_hours, 24)
+
+    if not hostids: return "未提供有效的 hostid"
+    target_id = hostids[0]
+
+    # 定义取值配置 (逻辑参考 zabbixLLM)
+    configs = [
+        {"key": "cpu", "t_name": "component", "t_val": "cpu", "trend": True},
+        {"key": "memory", "t_name": "component", "t_val": "memory", "trend": True},
+        {"key": "disk", "t_name": "disk", "t_val": "", "trend": False},
+        {"key": "filesystem", "t_name": "filesystem", "t_val": "", "trend": False},
+        {"key": "oracle", "t_name": "Application", "t_val": "Oracle", "trend": False}
+    ]
+
+    report = {}
+    now = int(time.time())
+    start_time = now - (hours * 3600)
+
+    for cfg in configs:
+        # 1. 获取实时数据 (模仿 fetch_result)
+        tag_filter = {"tag": cfg["t_name"], "operator": 0}
+        if cfg["t_val"]: tag_filter["value"] = cfg["t_val"]
+
+        items = client.item.get(
+            hostids=target_id,
+            tags=[tag_filter],
+            output=["itemid", "name", "lastvalue", "units", "value_type"],
+            filter={"status": 0}
+        )
+
+        report[cfg["key"]] = {"current": items, "trends": []}
+
+        # 2. 获取趋势数据 (模仿 fetch_resource_trend)
+        if cfg["trend"] and items:
+            # 仅对该分类下的第一个监控项取趋势，防止数据爆炸
+            primary_item = items[0]["itemid"]
+            trends = client.trend.get(
+                itemids=primary_item,
+                time_from=start_time,
+                time_till=now,
+                output=["clock", "value_avg", "value_max"]
+            )
+            report[cfg["key"]]["trends"] = trends
+
+    return format_response(report)
 
 if __name__ == "__main__":
     main()
