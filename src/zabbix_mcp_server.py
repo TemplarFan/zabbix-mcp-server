@@ -20,6 +20,15 @@ from fastmcp import FastMCP
 from zabbix_utils import ZabbixAPI
 from dotenv import load_dotenv
 
+# Import utility functions
+from utils.params import (
+    parse_int_param,
+    parse_time_param,
+    parse_list_param,
+    parse_dict_param
+)
+from utils.format import format_response, format_table
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -110,122 +119,6 @@ def validate_read_only() -> None:
     """
     if is_read_only():
         raise ValueError("Server is in read-only mode - write operations are not allowed")
-
-
-def parse_int_param(value: Any, default: Optional[int] = None) -> Optional[int]:
-    """处理数值参数，兼容字符串形式的数字"""
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return default
-
-def parse_time_param(value: Any, default: int) -> int:
-    """
-    将模型传来的值转换为Unix时间戳。
-    支持：纯数字字符串、整数、以及相对时间描述（如 '1d', '24h', '1h'）
-    """
-    if value is None:
-        return default
-
-    # 如果是纯数字或数字字符串，直接转int
-    if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
-        return int(value)
-
-    # 处理语义化字符串 (例如: "24h", "1d", "7d")
-    if isinstance(value, str):
-        value = value.lower().strip()
-        now = datetime.now()
-
-        # 使用正则匹配：数字 + 单位
-        match = re.match(r"(\d+)([hd])", value)
-        if match:
-            num = int(match.group(1))
-            unit = match.group(2)
-            if unit == 'h':
-                return int((now - timedelta(hours=num)).timestamp())
-            if unit == 'd':
-                return int((now - timedelta(days=num)).timestamp())
-
-        # 处理特定词汇
-        if "yesterday" in value:
-            return int((now - timedelta(days=1)).replace(hour=0, minute=0, second=0).timestamp())
-
-    return default
-
-def parse_list_param(value: Union[List[str], str, None]) -> Optional[List[str]]:
-    """Parse a parameter that should be a list, handling string representations.
-
-    Args:
-        value: The value to parse (can be a list, string representation, or None)
-
-    Returns:
-        Optional[List[str]]: Parsed list or None
-    """
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        # Try to parse as JSON
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, list):
-                return parsed
-        except (json.JSONDecodeError, ValueError):
-            pass
-        # If not valid JSON, treat as single item
-        return [value]
-    return value
-
-
-def parse_dict_param(value: Union[Dict[str, Any], str, None]) -> Optional[Dict[str, Any]]:
-    """Parse a parameter that should be a dict, handling string representations.
-
-    Args:
-        value: The value to parse (can be a dict, string representation, or None)
-
-    Returns:
-        Optional[Dict[str, Any]]: Parsed dict or None
-    """
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        # Try to parse as JSON
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, dict):
-                return parsed
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return value
-
-
-def parse_list_of_dicts_param(value: Union[List[Dict[str, Any]], str, None]) -> Optional[List[Dict[str, Any]]]:
-    """Parse a parameter that should be a list of dicts, handling string representations.
-
-    Args:
-        value: The value to parse (can be a list of dicts, string representation, or None)
-
-    Returns:
-        Optional[List[Dict[str, Any]]]: Parsed list of dicts or None
-    """
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return value
-    if isinstance(value, str):
-        # Try to parse as JSON
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, list):
-                return parsed
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return value
 
 
 # # HOST MANAGEMENT
