@@ -25,7 +25,8 @@ from utils.params import (
     parse_int_param,
     parse_time_param,
     parse_list_param,
-    parse_dict_param
+    parse_dict_param,
+    parse_list_of_dicts_param
 )
 from utils.format import format_response, format_table
 
@@ -2033,14 +2034,15 @@ def get_problem_summary(
     # 构建查询参数
     params = {
         "output": ["eventid", "name", "severity", "clock", "objectid"],
-        "selectHosts": ["hostid", "name"],
         "sortfield": "severity",
         "sortorder": "DESC",
-        "time_from": time_from
     }
 
     if hostid_list:
         params["hostids"] = hostid_list
+
+    if time_from:
+        params["time_from"] = time_from
 
     # 查询
     problems = client.problem.get(**params)
@@ -2096,7 +2098,21 @@ def get_problem_summary(
             else:
                 time_str = "-"
 
-            host = p.get("hosts", [{}])[0].get("name", "未知") if p.get("hosts") else "未知"
+            # 通过 objectid 查询触发器获取主机信息
+            triggerid = p.get("objectid", "")
+            host = "未知"
+            if triggerid:
+                try:
+                    triggers = client.trigger.get(
+                        triggerids=[triggerid],
+                        output=["description"],
+                        selectHosts=["name"],
+                        limit=1
+                    )
+                    if triggers and triggers[0].get("hosts"):
+                        host = triggers[0]["hosts"][0].get("name", "未知")
+                except:
+                    pass
             desc = p.get("name", "无描述")[:30]  # 截断
 
             sev = p.get("severity", 0)
