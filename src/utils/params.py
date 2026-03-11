@@ -88,3 +88,25 @@ def parse_dict_param(value: Union[Dict[str, Any], str, None]) -> Optional[Dict[s
         except json.JSONDecodeError:
             return None
     return None
+
+
+def parse_list_of_dicts_param(value: Union[List[Dict[str, Any]], str, None]) -> Optional[List[Dict[str, Any]]]:
+    """解析字典列表参数，支持JSON字符串"""
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict):
+                return [parsed]
+            return None
+        except json.JSONDecodeError:
+            return None
+    return None

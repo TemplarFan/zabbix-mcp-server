@@ -2034,8 +2034,6 @@ def get_problem_summary(
     # 构建查询参数
     params = {
         "output": ["eventid", "name", "severity", "clock", "objectid"],
-        "sortfield": "severity",
-        "sortorder": "DESC",
     }
 
     if hostid_list:
@@ -2046,6 +2044,9 @@ def get_problem_summary(
 
     # 查询
     problems = client.problem.get(**params)
+
+    # 按严重程度排序（API不支持，在本地排序）
+    problems = sorted(problems, key=lambda x: x.get("severity", 0), reverse=True)
 
     if not problems:
         return "✅ 当前没有告警"
@@ -2086,7 +2087,23 @@ def get_problem_summary(
         headers = ["时间", "主机", "问题", "级别"]
         rows = []
 
-        for p in sorted(problems, key=lambda x: x.get("severity", 0), reverse=True)[:5]:
+        # 批量获取主机信息：收集所有触发器ID，一次性查询
+        triggerids = [p.get("objectid", "") for p in problems[:5] if p.get("objectid")]
+        host_map = {}  # triggerid -> hostname
+        if triggerids:
+            try:
+                triggers = client.trigger.get(
+                    triggerids=triggerids,
+                    output=["triggerid"],
+                    selectHosts=["name"]
+                )
+                for t in triggers:
+                    if t.get("hosts"):
+                        host_map[t["triggerid"]] = t["hosts"][0].get("name", "未知")
+            except:
+                pass
+
+        for p in problems[:5]:
             # 格式化时间
             ts = p.get("clock", "")
             if ts:
@@ -2098,21 +2115,9 @@ def get_problem_summary(
             else:
                 time_str = "-"
 
-            # 通过 objectid 查询触发器获取主机信息
+            # 从缓存中获取主机名
             triggerid = p.get("objectid", "")
-            host = "未知"
-            if triggerid:
-                try:
-                    triggers = client.trigger.get(
-                        triggerids=[triggerid],
-                        output=["description"],
-                        selectHosts=["name"],
-                        limit=1
-                    )
-                    if triggers and triggers[0].get("hosts"):
-                        host = triggers[0]["hosts"][0].get("name", "未知")
-                except:
-                    pass
+            host = host_map.get(triggerid, "未知")
             desc = p.get("name", "无描述")[:30]  # 截断
 
             sev = p.get("severity", 0)
@@ -2168,8 +2173,7 @@ def check_host_health(host_identifier: str, time_range: str = "1h") -> str:
     # 3. 获取告警
     problems = client.problem.get(
         hostids=[hostid],
-        output=["eventid", "name", "severity", "clock", "description"],
-        selectHosts=["name"]
+        output=["eventid", "name", "severity", "clock"]
     )
 
     # 4. 获取关键监控项
@@ -2189,48 +2193,77 @@ def quick_status() -> str:
 
     Returns:
         整体状态摘要，包含：
-        - 主机总数和在线状态
+        - 主机总数和状态统计
         - 告警统计
-        - 最近事件
+        - 其他关键指标
     """
     client = get_zabbix_client()
 
-    lines = ["# Zabbix 整体状态\n"]
+    lines = ["# 📊 Zabbix 整体状态\n"]
 
-    # 1. 主机统计
+    # 1. 主机统计 - 获取所有主机
     hosts = client.host.get(
-        output=["hostid", "available"],
-        filter={"status": 0}  # 只统计启用状态的主机
+        output=["hostid", "available", "status"],
+        selectInterfaces=["type"]
     )
     total = len(hosts)
-    online = sum(1 for h in hosts if h.get("available") == "1")
+    enabled = sum(1 for h in hosts if h.get("status") == "0")
+    disabled = sum(1 for h in hosts if h.get("status") == "1")
 
-    lines.append(f"## 🖥️ 主机状态")
-    lines.append(f"- 总数: {total}")
-    lines.append(f"- 🟢 在线: {online}")
-    lines.append(f"- 🔴 离线: {total - online}")
+    # 按监控状态分类
+    available_count = sum(1 for h in hosts if h.get("available") == "1")
+    unavailable_count = sum(1 for h in hosts if h.get("available") == "2")
+    unknown_count = sum(1 for h in hosts if h.get("available") == "0")
+
+    lines.append(f"## 🖥️ 主机统计")
+    lines.append(f"- 主机总数: {total}")
+    lines.append(f"- 🟢 已启用: {enabled}")
+    lines.append(f"- ➖ 已禁用: {disabled}")
+    lines.append(f"")
+    lines.append(f"### 监控状态（基于 Zabbix Agent）")
+    lines.append(f"- 🟢 可用: {available_count}")
+    lines.append(f"- 🔴 不可用: {unavailable_count}")
+    lines.append(f"- ⚪ 未知（无 Agent）: {unknown_count}")
     lines.append("")
 
     # 2. 告警统计
     problems = client.problem.get(
-        output=["severity"],
-        sortfield="severity",
-        sortorder="DESC"
+        output=["severity"]
     )
 
-    lines.append(f"## ⚠️ 告警统计")
+    lines.append(f"## ⚠️ 当前告警")
     if problems:
         severity_count = {}
         for p in problems:
-            sev = p.get("severity", 0)
+            sev = int(p.get("severity", 0))
             severity_count[sev] = severity_count.get(sev, 0) + 1
 
+        total_problems = len(problems)
+        lines.append(f"**总计: {total_problems} 个问题**\n")
+
         for sev in sorted(severity_count.keys(), reverse=True):
-            emoji = {5: "🔴🔴", 4: "🔴", 3: "🟠", 2: "🟡"}.get(sev, "⚪")
-            name = {5: "灾难", 4: "严重", 3: "一般", 2: "警告"}.get(sev, "其他")
+            emoji = {5: "🔴🔴", 4: "🔴", 3: "🟠", 2: "🟡", 1: "🔵", 0: "⚪"}.get(sev, "⚪")
+            name = {5: "灾难", 4: "严重", 3: "一般", 2: "警告", 1: "信息", 0: "未分类"}.get(sev, "其他")
             lines.append(f"{emoji} {name}: {severity_count[sev]}个")
     else:
         lines.append("✅ 当前无告警")
+
+    lines.append("")
+
+    # 3. 触发器统计
+    triggers = client.trigger.get(
+        output=["triggerid", "status", "state", "value"],
+        filter={"status": "0"}  # 只统计启用状态的触发器
+    )
+    if triggers:
+        total_trig = len(triggers)
+        problem_trig = sum(1 for t in triggers if t.get("value") == "1")
+        ok_trig = sum(1 for t in triggers if t.get("value") == "0")
+
+        lines.append(f"## 🔔 触发器状态")
+        lines.append(f"- 启用中: {total_trig}")
+        lines.append(f"- 🔴 有问题: {problem_trig}")
+        lines.append(f"- 🟢 正常: {ok_trig}")
 
     return "\n".join(lines)
 
