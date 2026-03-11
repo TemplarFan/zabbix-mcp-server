@@ -1996,6 +1996,315 @@ def get_transport_config() -> Dict[str, Any]:
     return config
 
 
+# ==================== Summary Tools for Dify/LLM ====================
+
+@mcp.tool()
+def get_problem_summary(
+    hostids: Optional[str] = None,
+    time_range: str = "24h",
+    group_by: str = "severity"
+) -> str:
+    """
+    获取告警摘要（已聚合），适合对话场景直接展示
+
+    比 problem_get 更适合LLM展示，返回Markdown格式，无需二次处理
+
+    Args:
+        hostids: 主机ID列表（逗号分隔或JSON数组），不传则查询全部
+        time_range: 时间范围，支持 "1h", "24h", "7d", "yesterday"
+        group_by: 分组方式，默认按严重程度
+
+    Returns:
+        Markdown格式的告警摘要，包含统计和详情
+
+    Example:
+        get_problem_summary(time_range="24h")
+        get_problem_summary(hostids="10084,10085", time_range="1h")
+    """
+    client = get_zabbix_client()
+
+    # 解析参数
+    hostid_list = parse_list_param(hostids)
+
+    # 计算时间
+    now = int(time.time())
+    time_from = parse_time_param(time_range, now - 86400)  # 默认24小时
+
+    # 构建查询参数
+    params = {
+        "output": ["eventid", "name", "severity", "clock", "objectid"],
+        "selectHosts": ["hostid", "name"],
+        "sortfield": "severity",
+        "sortorder": "DESC",
+        "time_from": time_from
+    }
+
+    if hostid_list:
+        params["hostids"] = hostid_list
+
+    # 查询
+    problems = client.problem.get(**params)
+
+    if not problems:
+        return "✅ 当前没有告警"
+
+    # 按严重程度分组统计
+    severity_map = {
+        0: ("🔵 未分类", 0),
+        1: ("🟢 信息", 0),
+        2: ("🟡 警告", 0),
+        3: ("🟠 一般", 0),
+        4: ("🔴 严重", 0),
+        5: ("🔴🔴 灾难", 0),
+    }
+
+    for p in problems:
+        sev = p.get("severity", 0)
+        if sev in severity_map:
+            label, count = severity_map[sev]
+            severity_map[sev] = (label, count + 1)
+
+    lines = ["## 告警概览\n"]
+
+    # 统计摘要
+    total = len(problems)
+    lines.append(f"**总计: {total} 个告警**\n")
+
+    for sev in sorted(severity_map.keys(), reverse=True):
+        label, count = severity_map[sev]
+        if count > 0:
+            lines.append(f"{label}: {count}个")
+
+    lines.append("")
+
+    # 详细列表（只展示最严重的5个）
+    if problems:
+        lines.append("### 最严重的5个告警\n")
+
+        headers = ["时间", "主机", "问题", "级别"]
+        rows = []
+
+        for p in sorted(problems, key=lambda x: x.get("severity", 0), reverse=True)[:5]:
+            # 格式化时间
+            ts = p.get("clock", "")
+            if ts:
+                try:
+                    dt = datetime.fromtimestamp(int(ts))
+                    time_str = dt.strftime("%m-%d %H:%M")
+                except:
+                    time_str = str(ts)
+            else:
+                time_str = "-"
+
+            host = p.get("hosts", [{}])[0].get("name", "未知") if p.get("hosts") else "未知"
+            desc = p.get("name", "无描述")[:30]  # 截断
+
+            sev = p.get("severity", 0)
+            sev_label = {5: "灾难", 4: "严重", 3: "一般", 2: "警告", 1: "信息"}.get(sev, "未分类")
+
+            rows.append([time_str, host, desc, sev_label])
+
+        lines.append(format_table(headers, rows))
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def check_host_health(host_identifier: str, time_range: str = "1h") -> str:
+    """
+    一站式检查主机健康状况 - 适合"帮我看看XX服务器怎么样"这种场景
+
+    自动识别 host_identifier 类型（IP/主机名/hostid），返回完整的健康报告
+
+    Args:
+        host_identifier: 主机标识（IP地址、主机名或hostid）
+        time_range: 查询时间范围，默认1小时
+
+    Returns:
+        Markdown格式的健康报告，包含：
+        - 主机基本信息
+        - 当前告警
+        - 关键指标（CPU/内存/磁盘）
+        - 健康建议
+
+    Example:
+        check_host_health("172.18.6.220")
+        check_host_health("情报系统应用服务器")
+    """
+    client = get_zabbix_client()
+
+    # 1. 识别并查找hostid
+    hostid = _resolve_host_identifier(client, host_identifier)
+    if not hostid:
+        return f"❌ 未找到主机: {host_identifier}，请检查主机名或IP是否正确"
+
+    # 2. 获取主机信息
+    hosts = client.host.get(
+        hostids=[hostid],
+        output=["hostid", "name", "available", "error", "status"],
+        selectInterfaces=["ip", "dns"]
+    )
+    if not hosts:
+        return f"❌ 无法获取主机信息: {host_identifier}"
+
+    host = hosts[0]
+
+    # 3. 获取告警
+    problems = client.problem.get(
+        hostids=[hostid],
+        output=["eventid", "name", "severity", "clock", "description"],
+        selectHosts=["name"]
+    )
+
+    # 4. 获取关键监控项
+    items = client.item.get(
+        hostids=[hostid],
+        search={"key_": ["system.cpu.util", "vm.memory.util", "vfs.fs.size"]},
+        output=["itemid", "name", "key_", "lastvalue", "units"]
+    )
+
+    return _format_host_overview(host, problems, items)
+
+
+@mcp.tool()
+def quick_status() -> str:
+    """
+    快速查看Zabbix整体状态 - 适合每日巡检
+
+    Returns:
+        整体状态摘要，包含：
+        - 主机总数和在线状态
+        - 告警统计
+        - 最近事件
+    """
+    client = get_zabbix_client()
+
+    lines = ["# Zabbix 整体状态\n"]
+
+    # 1. 主机统计
+    hosts = client.host.get(
+        output=["hostid", "available"],
+        filter={"status": 0}  # 只统计启用状态的主机
+    )
+    total = len(hosts)
+    online = sum(1 for h in hosts if h.get("available") == "1")
+
+    lines.append(f"## 🖥️ 主机状态")
+    lines.append(f"- 总数: {total}")
+    lines.append(f"- 🟢 在线: {online}")
+    lines.append(f"- 🔴 离线: {total - online}")
+    lines.append("")
+
+    # 2. 告警统计
+    problems = client.problem.get(
+        output=["severity"],
+        sortfield="severity",
+        sortorder="DESC"
+    )
+
+    lines.append(f"## ⚠️ 告警统计")
+    if problems:
+        severity_count = {}
+        for p in problems:
+            sev = p.get("severity", 0)
+            severity_count[sev] = severity_count.get(sev, 0) + 1
+
+        for sev in sorted(severity_count.keys(), reverse=True):
+            emoji = {5: "🔴🔴", 4: "🔴", 3: "🟠", 2: "🟡"}.get(sev, "⚪")
+            name = {5: "灾难", 4: "严重", 3: "一般", 2: "警告"}.get(sev, "其他")
+            lines.append(f"{emoji} {name}: {severity_count[sev]}个")
+    else:
+        lines.append("✅ 当前无告警")
+
+    return "\n".join(lines)
+
+
+def _resolve_host_identifier(client, identifier: str) -> Optional[str]:
+    """
+    解析主机标识符，返回hostid
+
+    支持：
+    1. 纯数字（认为是hostid）
+    2. IP地址格式（搜索interfaces）
+    3. 主机名（模糊搜索）
+    """
+    # 1. 检查是否是纯数字（hostid）
+    if identifier.isdigit():
+        return identifier
+
+    # 2. 检查是否是IP地址
+    ip_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
+    if re.match(ip_pattern, identifier):
+        interfaces = client.hostinterface.get(
+            output=["hostid"],
+            filter={"ip": identifier}
+        )
+        if interfaces:
+            return interfaces[0]["hostid"]
+        return None
+
+    # 3. 按主机名搜索（模糊匹配）
+    hosts = client.host.get(
+        output=["hostid", "name"],
+        search={"name": identifier},
+        searchWildcardsEnabled=True,
+        limit=5
+    )
+
+    if len(hosts) == 1:
+        return hosts[0]["hostid"]
+    elif len(hosts) > 1:
+        # 如果有多个匹配，返回第一个
+        return hosts[0]["hostid"]
+
+    return None
+
+
+def _format_host_overview(host: Dict, problems: List[Dict], items: List[Dict]) -> str:
+    """格式化主机概览"""
+    lines = []
+
+    # 主机基本信息
+    host_name = host.get("name", "未知")
+    host_ip = host.get("interfaces", [{}])[0].get("ip", "N/A") if host.get("interfaces") else "N/A"
+    status = "🟢 正常" if host.get("available") == "1" else "🔴 不可用"
+
+    lines.append(f"## 🖥️ {host_name}")
+    lines.append(f"- IP: {host_ip}")
+    lines.append(f"- 状态: {status}")
+    lines.append("")
+
+    # 告警摘要
+    if problems:
+        lines.append(f"### ⚠️ 告警 ({len(problems)}个)")
+        for p in problems[:3]:  # 只展示前3个
+            desc = p.get("name", "无描述")
+            sev = p.get("severity", 0)
+            sev_emoji = {5: "🔴🔴", 4: "🔴", 3: "🟠", 2: "🟡", 1: "🟢"}.get(sev, "⚪")
+            lines.append(f"{sev_emoji} {desc}")
+        lines.append("")
+    else:
+        lines.append("✅ 无告警\n")
+
+    # 关键指标
+    key_metrics = {}
+    for item in items:
+        key = item.get("key_", "")
+        if "cpu.util" in key:
+            key_metrics["CPU"] = item.get("lastvalue", "N/A")
+        elif "memory.util" in key or "vm.memory.util" in key:
+            key_metrics["内存"] = item.get("lastvalue", "N/A")
+        elif "vfs.fs.size" in key and "pused" in key:
+            key_metrics["磁盘"] = item.get("lastvalue", "N/A")
+
+    if key_metrics:
+        lines.append("### 📊 关键指标")
+        for name, value in key_metrics.items():
+            lines.append(f"- {name}: {value}%")
+
+    return "\n".join(lines)
+
+
 def main():
     """Main entry point for uv execution."""
     logger.info("Starting Zabbix MCP Server")
