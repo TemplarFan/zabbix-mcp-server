@@ -245,7 +245,7 @@ def host_get(hostids: Union[List[str], str, None] = None,
     except Exception as e:
         return f"查询过程中出现异常: {str(e)}"
 
-@mcp.tool()
+# @mcp.tool()
 def host_create(host: str, groups: Union[List[Dict[str, str]], str],
                 interfaces: Union[List[Dict[str, Any]], str],
                 templates: Union[List[Dict[str, str]], str, None] = None,
@@ -287,7 +287,7 @@ def host_create(host: str, groups: Union[List[Dict[str, str]], str],
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def host_update(hostid: str, host: Optional[str] = None, 
                 name: Optional[str] = None, status: Optional[int] = None) -> str:
     """Update an existing host in Zabbix.
@@ -317,7 +317,7 @@ def host_update(hostid: str, host: Optional[str] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def host_delete(hostids: Union[List[str], str]) -> str:
     """Delete hosts from Zabbix.
 
@@ -338,7 +338,7 @@ def host_delete(hostids: Union[List[str], str]) -> str:
 
 
 # HOST GROUP MANAGEMENT
-@mcp.tool()
+# @mcp.tool()
 def hostgroup_get(groupids: Union[List[str], str, None] = None,
                   output: Union[str, List[str]] = "extend",
                   search: Union[Dict[str, str], str, None] = None,
@@ -374,7 +374,7 @@ def hostgroup_get(groupids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def hostgroup_create(name: str) -> str:
     """Create a new host group in Zabbix.
     
@@ -391,7 +391,7 @@ def hostgroup_create(name: str) -> str:
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def hostgroup_update(groupid: str, name: str) -> str:
     """Update an existing host group in Zabbix.
     
@@ -409,7 +409,7 @@ def hostgroup_update(groupid: str, name: str) -> str:
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def hostgroup_delete(groupids: Union[List[str], str]) -> str:
     """Delete host groups from Zabbix.
 
@@ -579,7 +579,7 @@ def item_get(itemids: Union[List[str], str, None] = None,
         return f"查询出错: {str(e)}"
 
 
-@mcp.tool()
+# @mcp.tool()
 def item_create(name: str, key_: str, hostid: str, type: int,
                 value_type: int, delay: str = "1m",
                 units: Optional[str] = None,
@@ -620,7 +620,7 @@ def item_create(name: str, key_: str, hostid: str, type: int,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def item_update(itemid: str, name: Optional[str] = None,
                 key_: Optional[str] = None, delay: Optional[str] = None,
                 status: Optional[int] = None) -> str:
@@ -654,7 +654,7 @@ def item_update(itemid: str, name: Optional[str] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def item_delete(itemids: Union[List[str], str]) -> str:
     """Delete items from Zabbix.
 
@@ -760,7 +760,7 @@ def trigger_get(triggerids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def trigger_create(description: str, expression: str,
                    priority: int = 0, status: int = 0,
                    comments: Optional[str] = None) -> str:
@@ -793,7 +793,7 @@ def trigger_create(description: str, expression: str,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def trigger_update(triggerid: str, description: Optional[str] = None,
                    expression: Optional[str] = None, priority: Optional[int] = None,
                    status: Optional[int] = None) -> str:
@@ -827,7 +827,7 @@ def trigger_update(triggerid: str, description: Optional[str] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def trigger_delete(triggerids: Union[List[str], str]) -> str:
     """Delete triggers from Zabbix.
 
@@ -848,7 +848,7 @@ def trigger_delete(triggerids: Union[List[str], str]) -> str:
 
 
 # TEMPLATE MANAGEMENT
-@mcp.tool()
+# @mcp.tool()
 def template_get(templateids: Union[List[str], str, None] = None,
                  groupids: Union[List[str], str, None] = None,
                  hostids: Union[List[str], str, None] = None,
@@ -894,7 +894,7 @@ def template_get(templateids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def template_create(host: str, groups: Union[List[Dict[str, str]], str],
                     name: Optional[str] = None, description: Optional[str] = None) -> str:
     """Create a new template in Zabbix.
@@ -928,7 +928,7 @@ def template_create(host: str, groups: Union[List[Dict[str, str]], str],
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def template_update(templateid: str, host: Optional[str] = None,
                     name: Optional[str] = None, description: Optional[str] = None) -> str:
     """Update an existing template in Zabbix.
@@ -958,7 +958,7 @@ def template_update(templateid: str, host: Optional[str] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def template_delete(templateids: Union[List[str], str]) -> str:
     """Delete templates from Zabbix.
 
@@ -1113,7 +1113,7 @@ def event_get(eventids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def event_acknowledge(eventids: Union[List[str], str], action: int = 1,
                       message: Optional[str] = None) -> str:
     """Acknowledge events in Zabbix.
@@ -1313,7 +1313,7 @@ def trend_get(itemids: Union[List[str], str],
 
 
 # USER MANAGEMENT
-@mcp.tool()
+# @mcp.tool()
 def user_get(userids: Union[List[str], str, None] = None,
              output: Union[str, List[str]] = "extend",
              search: Union[Dict[str, str], str, None] = None,
@@ -1349,7 +1349,7 @@ def user_get(userids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def user_create(username: str, passwd: str, usrgrps: Union[List[Dict[str, str]], str],
                 name: Optional[str] = None, surname: Optional[str] = None,
                 email: Optional[str] = None) -> str:
@@ -1389,7 +1389,7 @@ def user_create(username: str, passwd: str, usrgrps: Union[List[Dict[str, str]],
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def user_update(userid: str, username: Optional[str] = None,
                 name: Optional[str] = None, surname: Optional[str] = None,
                 email: Optional[str] = None) -> str:
@@ -1423,7 +1423,7 @@ def user_update(userid: str, username: Optional[str] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def user_delete(userids: Union[List[str], str]) -> str:
     """Delete users from Zabbix.
 
@@ -1444,7 +1444,7 @@ def user_delete(userids: Union[List[str], str]) -> str:
 
 
 # PROXY MANAGEMENT
-@mcp.tool()
+# @mcp.tool()
 def proxy_get(proxyids: Union[List[str], str, None] = None,
               output: str = "extend",
               search: Union[Dict[str, str], str, None] = None,
@@ -1485,7 +1485,7 @@ def proxy_get(proxyids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def proxy_create(host: str, status: int = 5,
                  description: Optional[str] = None,
                  tls_connect: int = 1,
@@ -1519,7 +1519,7 @@ def proxy_create(host: str, status: int = 5,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def proxy_update(proxyid: str, host: Optional[str] = None,
                  status: Optional[int] = None,
                  description: Optional[str] = None,
@@ -1558,7 +1558,7 @@ def proxy_update(proxyid: str, host: Optional[str] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def proxy_delete(proxyids: Union[List[str], str]) -> str:
     """Delete proxies from Zabbix.
 
@@ -1579,7 +1579,7 @@ def proxy_delete(proxyids: Union[List[str], str]) -> str:
 
 
 # MAINTENANCE MANAGEMENT
-@mcp.tool()
+# @mcp.tool()
 def maintenance_get(maintenanceids: Union[List[str], str, None] = None,
                     groupids: Union[List[str], str, None] = None,
                     hostids: Union[List[str], str, None] = None,
@@ -1614,7 +1614,7 @@ def maintenance_get(maintenanceids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def maintenance_create(name: str, active_since: int, active_till: int,
                        groupids: Union[List[str], str, None] = None,
                        hostids: Union[List[str], str, None] = None,
@@ -1662,7 +1662,7 @@ def maintenance_create(name: str, active_since: int, active_till: int,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def maintenance_update(maintenanceid: str, name: Optional[str] = None,
                        active_since: Optional[int] = None, active_till: Optional[int] = None,
                        description: Optional[str] = None) -> str:
@@ -1696,7 +1696,7 @@ def maintenance_update(maintenanceid: str, name: Optional[str] = None,
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def maintenance_delete(maintenanceids: Union[List[str], str]) -> str:
     """Delete maintenance periods from Zabbix.
 
@@ -1717,7 +1717,7 @@ def maintenance_delete(maintenanceids: Union[List[str], str]) -> str:
 
 
 # GRAPH MANAGEMENT
-@mcp.tool()
+# @mcp.tool()
 def graph_get(graphids: Union[List[str], str, None] = None,
               hostids: Union[List[str], str, None] = None,
               templateids: Union[List[str], str, None] = None,
@@ -1763,7 +1763,7 @@ def graph_get(graphids: Union[List[str], str, None] = None,
 
 
 # DISCOVERY RULE MANAGEMENT
-@mcp.tool()
+# @mcp.tool()
 def discoveryrule_get(itemids: Union[List[str], str, None] = None,
                       hostids: Union[List[str], str, None] = None,
                       templateids: Union[List[str], str, None] = None,
@@ -1809,7 +1809,7 @@ def discoveryrule_get(itemids: Union[List[str], str, None] = None,
 
 
 # ITEM PROTOTYPE MANAGEMENT
-@mcp.tool()
+# @mcp.tool()
 def itemprototype_get(itemids: Union[List[str], str, None] = None,
                       discoveryids: Union[List[str], str, None] = None,
                       hostids: Union[List[str], str, None] = None,
@@ -1855,7 +1855,7 @@ def itemprototype_get(itemids: Union[List[str], str, None] = None,
 
 
 # CONFIGURATION EXPORT/IMPORT
-@mcp.tool()
+# @mcp.tool()
 def configuration_export(format: str = "json",
                          options: Union[Dict[str, Any], str, None] = None) -> str:
     """Export configuration from Zabbix.
@@ -1880,7 +1880,7 @@ def configuration_export(format: str = "json",
     return format_response(result)
 
 
-@mcp.tool()
+# @mcp.tool()
 def configuration_import(format: str, source: str,
                          rules: Union[Dict[str, Any], str]) -> str:
     """Import configuration to Zabbix.
@@ -1910,7 +1910,7 @@ def configuration_import(format: str, source: str,
 
 
 # MACRO MANAGEMENT
-@mcp.tool()
+# @mcp.tool()
 def usermacro_get(globalmacroids: Union[List[str], str, None] = None,
                   hostids: Union[List[str], str, None] = None,
                   output: Union[str, List[str]] = "extend",
@@ -2422,7 +2422,7 @@ def get_host_by_ip(ip: str) -> str:
     return format_response(hosts)
 
 
-@mcp.tool()
+# @mcp.tool()
 def inspect_host_performance(
         hostid: Union[str, int, List[str]],
         range_hours: Union[int, str] = 24
