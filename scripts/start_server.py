@@ -174,10 +174,11 @@ def main() -> None:
         
         # Import and run the server
         logger.info("Importing server module")
-        from zabbix_mcp_server import main as server_main
-        
+        # Use new main.py entry point (supports modular tools including trend_summary)
+        from main import main as server_main
+
         logger.info("Starting MCP server")
-        print("🚀 Starting MCP server...")
+        print("🚀 Starting MCP server (using new modular architecture)...")
         print("Press Ctrl+C to stop")
         print()
         

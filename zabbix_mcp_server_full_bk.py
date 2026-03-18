@@ -122,6 +122,63 @@ def validate_read_only() -> None:
         raise ValueError("Server is in read-only mode - write operations are not allowed")
 
 
+# # HOST MANAGEMENT
+# @mcp.tool()
+# def host_get(hostids: Union[List[str], str, None] = None,
+#              groupids: Union[List[str], str, None] = None,
+#              templateids: Union[List[str], str, None] = None,
+#              output: Union[str, List[str], None] = None,
+#              search: Union[Dict[str, str], str, None] = None,
+#              filter: Union[Dict[str, Any], str, None] = None,
+#              limit: Optional[int] = None) -> str:
+#     """Get hosts from Zabbix with optional filtering.
+#
+#     Args:
+#         hostids: List of host IDs to retrieve (or JSON string representation)
+#         groupids: List of host group IDs to filter by (or JSON string representation)
+#         templateids: List of template IDs to filter by (or JSON string representation)
+#         output: Output format - defaults to core fields only for performance.
+#                 Use "extend" for all fields, or specify list of fields needed.
+#                 Default fields: hostid, host, name, status, available, error, maintenance_status
+#         search: Search criteria (dict or JSON string)
+#         filter: Filter criteria (dict or JSON string)
+#         limit: Maximum number of results
+#
+#     Returns:
+#         str: JSON formatted list of hosts
+#     """
+#     client = get_zabbix_client()
+#
+#     # Parse parameters
+#     hostids = parse_list_param(hostids)
+#     groupids = parse_list_param(groupids)
+#     templateids = parse_list_param(templateids)
+#     search = parse_dict_param(search)
+#     filter = parse_dict_param(filter)
+#     limit = parse_int_param(limit)
+#
+#     # Default to core fields for better performance
+#     if output is None:
+#         output = ["hostid", "host", "name", "status", "available", "error",
+#                   "maintenance_status"]
+#
+#     params = {"output": output}
+#
+#     if hostids:
+#         params["hostids"] = hostids
+#     if groupids:
+#         params["groupids"] = groupids
+#     if templateids:
+#         params["templateids"] = templateids
+#     if search:
+#         params["search"] = search
+#     if filter:
+#         params["filter"] = filter
+#     if limit:
+#         params["limit"] = limit
+#
+#     result = client.host.get(**params)
+#     return format_response(result)
 @mcp.tool()
 def host_get(hostids: Union[List[str], str, None] = None,
              name: Optional[str] = None,  # 新增：显式支持名称模糊搜索
@@ -188,6 +245,252 @@ def host_get(hostids: Union[List[str], str, None] = None,
     except Exception as e:
         return f"查询过程中出现异常: {str(e)}"
 
+@mcp.tool()
+def host_create(host: str, groups: Union[List[Dict[str, str]], str],
+                interfaces: Union[List[Dict[str, Any]], str],
+                templates: Union[List[Dict[str, str]], str, None] = None,
+                inventory_mode: int = -1,
+                status: int = 0) -> str:
+    """Create a new host in Zabbix.
+
+    Args:
+        host: Host name
+        groups: List of host groups (format: [{"groupid": "1"}] or JSON string)
+        interfaces: List of host interfaces (or JSON string)
+        templates: List of templates to link (format: [{"templateid": "1"}] or JSON string)
+        inventory_mode: Inventory mode (-1=disabled, 0=manual, 1=automatic)
+        status: Host status (0=enabled, 1=disabled)
+
+    Returns:
+        str: JSON formatted creation result
+    """
+    validate_read_only()
+
+    # Parse parameters
+    groups = parse_list_of_dicts_param(groups)
+    interfaces = parse_list_of_dicts_param(interfaces)
+    templates = parse_list_of_dicts_param(templates)
+
+    client = get_zabbix_client()
+    params = {
+        "host": host,
+        "groups": groups,
+        "interfaces": interfaces,
+        "inventory_mode": inventory_mode,
+        "status": status
+    }
+
+    if templates:
+        params["templates"] = templates
+
+    result = client.host.create(**params)
+    return format_response(result)
+
+
+@mcp.tool()
+def host_update(hostid: str, host: Optional[str] = None, 
+                name: Optional[str] = None, status: Optional[int] = None) -> str:
+    """Update an existing host in Zabbix.
+    
+    Args:
+        hostid: Host ID to update
+        host: New host name
+        name: New visible name
+        status: New status (0=enabled, 1=disabled)
+        
+    Returns:
+        str: JSON formatted update result
+    """
+    validate_read_only()
+    
+    client = get_zabbix_client()
+    params = {"hostid": hostid}
+    
+    if host:
+        params["host"] = host
+    if name:
+        params["name"] = name
+    if status is not None:
+        params["status"] = status
+    
+    result = client.host.update(**params)
+    return format_response(result)
+
+
+@mcp.tool()
+def host_delete(hostids: Union[List[str], str]) -> str:
+    """Delete hosts from Zabbix.
+
+    Args:
+        hostids: List of host IDs to delete (or JSON string representation)
+
+    Returns:
+        str: JSON formatted deletion result
+    """
+    validate_read_only()
+
+    # Parse parameters
+    hostids = parse_list_param(hostids)
+
+    client = get_zabbix_client()
+    result = client.host.delete(*hostids)
+    return format_response(result)
+
+
+# HOST GROUP MANAGEMENT
+@mcp.tool()
+def hostgroup_get(groupids: Union[List[str], str, None] = None,
+                  output: Union[str, List[str]] = "extend",
+                  search: Union[Dict[str, str], str, None] = None,
+                  filter: Union[Dict[str, Any], str, None] = None) -> str:
+    """Get host groups from Zabbix.
+
+    Args:
+        groupids: List of group IDs to retrieve (or JSON string representation)
+        output: Output format (extend or list of specific fields)
+        search: Search criteria (dict or JSON string)
+        filter: Filter criteria (dict or JSON string)
+
+    Returns:
+        str: JSON formatted list of host groups
+    """
+    client = get_zabbix_client()
+
+    # Parse parameters
+    groupids = parse_list_param(groupids)
+    search = parse_dict_param(search)
+    filter = parse_dict_param(filter)
+
+    params = {"output": output}
+
+    if groupids:
+        params["groupids"] = groupids
+    if search:
+        params["search"] = search
+    if filter:
+        params["filter"] = filter
+
+    result = client.hostgroup.get(**params)
+    return format_response(result)
+
+
+@mcp.tool()
+def hostgroup_create(name: str) -> str:
+    """Create a new host group in Zabbix.
+    
+    Args:
+        name: Host group name
+        
+    Returns:
+        str: JSON formatted creation result
+    """
+    validate_read_only()
+    
+    client = get_zabbix_client()
+    result = client.hostgroup.create(name=name)
+    return format_response(result)
+
+
+@mcp.tool()
+def hostgroup_update(groupid: str, name: str) -> str:
+    """Update an existing host group in Zabbix.
+    
+    Args:
+        groupid: Group ID to update
+        name: New group name
+        
+    Returns:
+        str: JSON formatted update result
+    """
+    validate_read_only()
+    
+    client = get_zabbix_client()
+    result = client.hostgroup.update(groupid=groupid, name=name)
+    return format_response(result)
+
+
+@mcp.tool()
+def hostgroup_delete(groupids: Union[List[str], str]) -> str:
+    """Delete host groups from Zabbix.
+
+    Args:
+        groupids: List of group IDs to delete (or JSON string representation)
+
+    Returns:
+        str: JSON formatted deletion result
+    """
+    validate_read_only()
+
+    # Parse parameters
+    groupids = parse_list_param(groupids)
+
+    client = get_zabbix_client()
+    result = client.hostgroup.delete(*groupids)
+    return format_response(result)
+
+
+# ITEM MANAGEMENT
+# @mcp.tool()
+# def item_get(itemids: Union[List[str], str, None] = None,
+#              hostids: Union[List[str], str, None] = None,
+#              groupids: Union[List[str], str, None] = None,
+#              templateids: Union[List[str], str, None] = None,
+#              output: Union[str, List[str], None] = None,
+#              search: Union[Dict[str, str], str, None] = None,
+#              filter: Union[Dict[str, Any], str, None] = None,
+#              limit: Union[int, str, None] = None) -> str:
+#     """Get items from Zabbix with optional filtering.
+#
+#     Args:
+#         itemids: List of item IDs to retrieve (or JSON string representation)
+#         hostids: List of host IDs to filter by (or JSON string representation)
+#         groupids: List of host group IDs to filter by (or JSON string representation)
+#         templateids: List of template IDs to filter by (or JSON string representation)
+#         output: Output format - defaults to core fields only for performance.
+#                 Use "extend" for all fields, or specify list of fields needed.
+#                 Default fields: itemid, name, key_, status, hostid, value_type, delay, type, units, lastvalue, error
+#         search: Search criteria (dict or JSON string)
+#         filter: Filter criteria (dict or JSON string)
+#         limit: Maximum number of results
+#
+#     Returns:
+#         str: JSON formatted list of items
+#     """
+#     client = get_zabbix_client()
+#
+#     # Parse parameters
+#     itemids = parse_list_param(itemids)
+#     hostids = parse_list_param(hostids)
+#     groupids = parse_list_param(groupids)
+#     templateids = parse_list_param(templateids)
+#     search = parse_dict_param(search)
+#     filter = parse_dict_param(filter)
+#     limit = parse_int_param(limit)
+#
+#     # Default to core fields for better performance
+#     if output is None:
+#         output = ["itemid", "name", "key_", "status", "hostid", "value_type",
+#                   "delay", "type", "units", "lastvalue", "error"]
+#
+#     params = {"output": output}
+#
+#     if itemids:
+#         params["itemids"] = itemids
+#     if hostids:
+#         params["hostids"] = hostids
+#     if groupids:
+#         params["groupids"] = groupids
+#     if templateids:
+#         params["templateids"] = templateids
+#     if search:
+#         params["search"] = search
+#     if filter:
+#         params["filter"] = filter
+#     if limit:
+#         params["limit"] = limit
+#
+#     result = client.item.get(**params)
+#     return format_response(result)
 
 
 @mcp.tool()
@@ -276,7 +579,7 @@ def item_get(itemids: Union[List[str], str, None] = None,
         return f"查询出错: {str(e)}"
 
 
-# @mcp.tool()
+@mcp.tool()
 def item_create(name: str, key_: str, hostid: str, type: int,
                 value_type: int, delay: str = "1m",
                 units: Optional[str] = None,
@@ -317,7 +620,7 @@ def item_create(name: str, key_: str, hostid: str, type: int,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def item_update(itemid: str, name: Optional[str] = None,
                 key_: Optional[str] = None, delay: Optional[str] = None,
                 status: Optional[int] = None) -> str:
@@ -351,7 +654,7 @@ def item_update(itemid: str, name: Optional[str] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def item_delete(itemids: Union[List[str], str]) -> str:
     """Delete items from Zabbix.
 
@@ -457,7 +760,7 @@ def trigger_get(triggerids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def trigger_create(description: str, expression: str,
                    priority: int = 0, status: int = 0,
                    comments: Optional[str] = None) -> str:
@@ -490,7 +793,7 @@ def trigger_create(description: str, expression: str,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def trigger_update(triggerid: str, description: Optional[str] = None,
                    expression: Optional[str] = None, priority: Optional[int] = None,
                    status: Optional[int] = None) -> str:
@@ -524,7 +827,7 @@ def trigger_update(triggerid: str, description: Optional[str] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def trigger_delete(triggerids: Union[List[str], str]) -> str:
     """Delete triggers from Zabbix.
 
@@ -545,7 +848,7 @@ def trigger_delete(triggerids: Union[List[str], str]) -> str:
 
 
 # TEMPLATE MANAGEMENT
-# @mcp.tool()
+@mcp.tool()
 def template_get(templateids: Union[List[str], str, None] = None,
                  groupids: Union[List[str], str, None] = None,
                  hostids: Union[List[str], str, None] = None,
@@ -591,7 +894,7 @@ def template_get(templateids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def template_create(host: str, groups: Union[List[Dict[str, str]], str],
                     name: Optional[str] = None, description: Optional[str] = None) -> str:
     """Create a new template in Zabbix.
@@ -625,7 +928,7 @@ def template_create(host: str, groups: Union[List[Dict[str, str]], str],
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def template_update(templateid: str, host: Optional[str] = None,
                     name: Optional[str] = None, description: Optional[str] = None) -> str:
     """Update an existing template in Zabbix.
@@ -655,7 +958,7 @@ def template_update(templateid: str, host: Optional[str] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def template_delete(templateids: Union[List[str], str]) -> str:
     """Delete templates from Zabbix.
 
@@ -810,7 +1113,7 @@ def event_get(eventids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def event_acknowledge(eventids: Union[List[str], str], action: int = 1,
                       message: Optional[str] = None) -> str:
     """Acknowledge events in Zabbix.
@@ -1009,205 +1312,8 @@ def trend_get(itemids: Union[List[str], str],
         return f"获取趋势失败: {str(e)}"
 
 
-@mcp.tool()
-def trend_summary(
-    itemids: Union[str, List[str]],
-    hours: int = 24,
-    include_analysis: bool = True
-) -> str:
-    """获取趋势统计摘要（极省Token），适合快速了解指标变化。
-
-    相比 trend_get（返回详细时间序列），trend_summary 只返回：
-    - 当前值、平均值、最大值、最小值
-    - 趋势判断（上升/下降/平稳）
-    - 关键时间点（峰值时间）
-
-    Args:
-        itemids: 监控项ID（最多3个，防止Token溢出）
-        hours: 查询时长（默认24小时，支持1h/6h/12h/24h/7d）
-        include_analysis: 是否包含趋势分析和建议
-
-    Returns:
-        Markdown格式摘要，包含统计表格和趋势分析
-
-    Example:
-        trend_summary(itemids="68053", hours=24)
-        trend_summary(itemids=["68053", "68050"], hours=12, include_analysis=True)
-    """
-    client = get_zabbix_client()
-
-    # Parse and validate itemids
-    ids = parse_list_param(itemids)
-    if not ids:
-        return "❌ 错误: 必须提供itemid"
-
-    # Limit to 3 itemids to prevent token overflow
-    if len(ids) > 3:
-        return f"⚠️ 最多支持3个监控项，您提供了{len(ids)}个，请减少数量"
-
-    # Parse hours (support string like "24h", "1d")
-    hours_map = {"1h": 1, "6h": 6, "12h": 12, "24h": 24, "1d": 24, "7d": 168}
-    if isinstance(hours, str):
-        hours = hours_map.get(hours.lower(), 24)
-    hours = min(max(hours, 1), 168)  # Clamp between 1-168 hours
-
-    # Get trend data
-    now = int(time.time())
-    start_time = now - hours * 3600
-
-    try:
-        # Get item names for display
-        items = client.item.get(
-            itemids=ids,
-            output=["itemid", "name", "units"]
-        )
-        item_map = {i["itemid"]: i for i in items}
-
-        trends_data = {}
-        for itemid in ids:
-            trends = client.trend.get(
-                itemids=itemid,
-                time_from=start_time,
-                time_till=now,
-                output=["clock", "value_avg", "value_max", "value_min"]
-            )
-            trends_data[itemid] = trends
-
-        # Process and format results
-        return _format_trend_summary(trends_data, item_map, hours, include_analysis)
-
-    except Exception as e:
-        return f"❌ 查询趋势数据失败: {str(e)}"
-
-
-def _format_trend_summary(
-    trends_data: Dict[str, List[Dict]],
-    item_map: Dict[str, Dict],
-    hours: int,
-    include_analysis: bool
-) -> str:
-    """Format trend data into a summary report."""
-    lines = [f"## 📈 趋势摘要（{hours}小时）\n"]
-
-    # Build summary table
-    headers = ["监控项", "当前值", "平均值", "最大值", "最小值", "趋势"]
-    rows = []
-    analysis_data = []
-
-    for itemid, trends in trends_data.items():
-        if not trends:
-            rows.append([item_map.get(itemid, {}).get("name", itemid)[:20], "无数据", "-", "-", "-", "-"])
-            continue
-
-        item = item_map.get(itemid, {})
-        item_name = item.get("name", itemid)[:25]
-        units = item.get("units", "")
-
-        # Calculate statistics
-        values_avg = [t.get("value_avg", 0) for t in trends if t.get("value_avg") is not None]
-        values_max = [t.get("value_max", 0) for t in trends if t.get("value_max") is not None]
-        values_min = [t.get("value_min", 0) for t in trends if t.get("value_min") is not None]
-
-        if not values_avg:
-            rows.append([item_name, "无有效数据", "-", "-", "-", "-"])
-            continue
-
-        current = values_avg[-1]
-        avg = sum(values_avg) / len(values_avg)
-        max_val = max(values_max) if values_max else 0
-        min_val = min(values_min) if values_min else 0
-
-        # Find peak time
-        peak_idx = values_max.index(max_val) if values_max else 0
-        peak_time = trends[peak_idx].get("clock") if peak_idx < len(trends) else None
-
-        # Calculate trend direction
-        mid = len(values_avg) // 2
-        if mid > 0:
-            first_half = sum(values_avg[:mid]) / mid
-            second_half = sum(values_avg[mid:]) / (len(values_avg) - mid)
-
-            if second_half > first_half * 1.1:
-                trend_direction = "⬆️ 上升"
-            elif second_half < first_half * 0.9:
-                trend_direction = "⬇️ 下降"
-            else:
-                trend_direction = "➡️ 平稳"
-        else:
-            trend_direction = "➡️ 平稳"
-
-        # Format values with units
-        def fmt(val):
-            if units == "%":
-                return f"{val:.1f}%"
-            elif "B" in units or "b" in units:
-                return f"{val:.2f} {units}"
-            else:
-                return f"{val:.2f}"
-
-        rows.append([
-            item_name,
-            fmt(current),
-            fmt(avg),
-            f"{fmt(max_val)} ⏰{_format_time(peak_time)}",
-            fmt(min_val),
-            trend_direction
-        ])
-
-        analysis_data.append({
-            "name": item_name,
-            "current": current,
-            "avg": avg,
-            "max": max_val,
-            "min": min_val,
-            "trend": trend_direction,
-            "peak_time": peak_time
-        })
-
-    lines.append(format_table(headers, rows))
-
-    # Add analysis
-    if include_analysis and analysis_data:
-        lines.append("\n### 📊 趋势分析")
-        for data in analysis_data:
-            name = data["name"]
-            trend = data["trend"]
-            current = data["current"]
-            avg = data["avg"]
-
-            if "上升" in trend:
-                analysis = f"- **{name}**: 持续增长，当前值({current:.1f})高于平均值({avg:.1f})"
-            elif "下降" in trend:
-                analysis = f"- **{name}**: 持续下降，当前值({current:.1f})低于平均值({avg:.1f})"
-            else:
-                analysis = f"- **{name}**: 整体平稳，波动在正常范围内"
-
-            lines.append(analysis)
-
-        # Add recommendations
-        lines.append("\n### 💡 建议")
-        high_usage_items = [d for d in analysis_data if d["current"] > 80]
-        if high_usage_items:
-            lines.append("- 以下指标使用率超过80%，建议关注：" + ", ".join([d["name"][:15] for d in high_usage_items]))
-        else:
-            lines.append("- 各项指标正常，继续观察即可")
-
-    return "\n".join(lines)
-
-
-def _format_time(timestamp: Optional[int]) -> str:
-    """Format Unix timestamp to readable time."""
-    if not timestamp:
-        return "-"
-    try:
-        dt = datetime.fromtimestamp(int(timestamp))
-        return dt.strftime("%H:%M")
-    except:
-        return "-"
-
-
 # USER MANAGEMENT
-# @mcp.tool()
+@mcp.tool()
 def user_get(userids: Union[List[str], str, None] = None,
              output: Union[str, List[str]] = "extend",
              search: Union[Dict[str, str], str, None] = None,
@@ -1243,7 +1349,7 @@ def user_get(userids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def user_create(username: str, passwd: str, usrgrps: Union[List[Dict[str, str]], str],
                 name: Optional[str] = None, surname: Optional[str] = None,
                 email: Optional[str] = None) -> str:
@@ -1283,7 +1389,7 @@ def user_create(username: str, passwd: str, usrgrps: Union[List[Dict[str, str]],
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def user_update(userid: str, username: Optional[str] = None,
                 name: Optional[str] = None, surname: Optional[str] = None,
                 email: Optional[str] = None) -> str:
@@ -1317,7 +1423,7 @@ def user_update(userid: str, username: Optional[str] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def user_delete(userids: Union[List[str], str]) -> str:
     """Delete users from Zabbix.
 
@@ -1338,7 +1444,7 @@ def user_delete(userids: Union[List[str], str]) -> str:
 
 
 # PROXY MANAGEMENT
-# @mcp.tool()
+@mcp.tool()
 def proxy_get(proxyids: Union[List[str], str, None] = None,
               output: str = "extend",
               search: Union[Dict[str, str], str, None] = None,
@@ -1379,7 +1485,7 @@ def proxy_get(proxyids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def proxy_create(host: str, status: int = 5,
                  description: Optional[str] = None,
                  tls_connect: int = 1,
@@ -1413,7 +1519,7 @@ def proxy_create(host: str, status: int = 5,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def proxy_update(proxyid: str, host: Optional[str] = None,
                  status: Optional[int] = None,
                  description: Optional[str] = None,
@@ -1452,7 +1558,7 @@ def proxy_update(proxyid: str, host: Optional[str] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def proxy_delete(proxyids: Union[List[str], str]) -> str:
     """Delete proxies from Zabbix.
 
@@ -1473,7 +1579,7 @@ def proxy_delete(proxyids: Union[List[str], str]) -> str:
 
 
 # MAINTENANCE MANAGEMENT
-# @mcp.tool()
+@mcp.tool()
 def maintenance_get(maintenanceids: Union[List[str], str, None] = None,
                     groupids: Union[List[str], str, None] = None,
                     hostids: Union[List[str], str, None] = None,
@@ -1508,7 +1614,7 @@ def maintenance_get(maintenanceids: Union[List[str], str, None] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def maintenance_create(name: str, active_since: int, active_till: int,
                        groupids: Union[List[str], str, None] = None,
                        hostids: Union[List[str], str, None] = None,
@@ -1556,7 +1662,7 @@ def maintenance_create(name: str, active_since: int, active_till: int,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def maintenance_update(maintenanceid: str, name: Optional[str] = None,
                        active_since: Optional[int] = None, active_till: Optional[int] = None,
                        description: Optional[str] = None) -> str:
@@ -1590,7 +1696,7 @@ def maintenance_update(maintenanceid: str, name: Optional[str] = None,
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def maintenance_delete(maintenanceids: Union[List[str], str]) -> str:
     """Delete maintenance periods from Zabbix.
 
@@ -1611,7 +1717,7 @@ def maintenance_delete(maintenanceids: Union[List[str], str]) -> str:
 
 
 # GRAPH MANAGEMENT
-# @mcp.tool()
+@mcp.tool()
 def graph_get(graphids: Union[List[str], str, None] = None,
               hostids: Union[List[str], str, None] = None,
               templateids: Union[List[str], str, None] = None,
@@ -1657,7 +1763,7 @@ def graph_get(graphids: Union[List[str], str, None] = None,
 
 
 # DISCOVERY RULE MANAGEMENT
-# @mcp.tool()
+@mcp.tool()
 def discoveryrule_get(itemids: Union[List[str], str, None] = None,
                       hostids: Union[List[str], str, None] = None,
                       templateids: Union[List[str], str, None] = None,
@@ -1703,7 +1809,7 @@ def discoveryrule_get(itemids: Union[List[str], str, None] = None,
 
 
 # ITEM PROTOTYPE MANAGEMENT
-# @mcp.tool()
+@mcp.tool()
 def itemprototype_get(itemids: Union[List[str], str, None] = None,
                       discoveryids: Union[List[str], str, None] = None,
                       hostids: Union[List[str], str, None] = None,
@@ -1749,7 +1855,7 @@ def itemprototype_get(itemids: Union[List[str], str, None] = None,
 
 
 # CONFIGURATION EXPORT/IMPORT
-# @mcp.tool()
+@mcp.tool()
 def configuration_export(format: str = "json",
                          options: Union[Dict[str, Any], str, None] = None) -> str:
     """Export configuration from Zabbix.
@@ -1774,7 +1880,7 @@ def configuration_export(format: str = "json",
     return format_response(result)
 
 
-# @mcp.tool()
+@mcp.tool()
 def configuration_import(format: str, source: str,
                          rules: Union[Dict[str, Any], str]) -> str:
     """Import configuration to Zabbix.
@@ -1804,7 +1910,7 @@ def configuration_import(format: str, source: str,
 
 
 # MACRO MANAGEMENT
-# @mcp.tool()
+@mcp.tool()
 def usermacro_get(globalmacroids: Union[List[str], str, None] = None,
                   hostids: Union[List[str], str, None] = None,
                   output: Union[str, List[str]] = "extend",
@@ -2025,13 +2131,7 @@ def get_problem_summary(
 
 
 @mcp.tool()
-def check_host_health(
-    host_identifier: str,
-    time_range: str = "24h",
-    include_trends: bool = False,
-    trend_hours: int = 24,
-    include_oracle: bool = False
-) -> str:
+def check_host_health(host_identifier: str, time_range: str = "1h") -> str:
     """
     一站式检查主机健康状况 - 适合"帮我看看XX服务器怎么样"这种场景
 
@@ -2039,22 +2139,18 @@ def check_host_health(
 
     Args:
         host_identifier: 主机标识（IP地址、主机名或hostid）
-        time_range: 查询告警的时间范围，默认24小时，支持 "1h", "6h", "24h", "7d"
-        include_trends: 是否查询历史趋势数据（默认False，节省API调用）
-        trend_hours: 趋势数据查询时长（默认24小时）
-        include_oracle: 是否查询 Oracle 相关指标（默认False）
+        time_range: 查询时间范围，默认1小时
 
     Returns:
         Markdown格式的健康报告，包含：
-        - 主机基本信息（IP、状态）
-        - 当前告警列表
-        - 关键指标（CPU/内存/磁盘/文件系统/[Oracle]）
-        - [可选] 趋势数据分析
+        - 主机基本信息
+        - 当前告警
+        - 关键指标（CPU/内存/磁盘）
+        - 健康建议
 
     Example:
         check_host_health("172.18.6.220")
-        check_host_health("情报系统应用服务器", include_trends=True)
-        check_host_health("192.168.1.1", include_trends=True, trend_hours=12, include_oracle=True)
+        check_host_health("情报系统应用服务器")
     """
     client = get_zabbix_client()
 
@@ -2066,20 +2162,13 @@ def check_host_health(
     # 2. 获取主机信息
     hosts = client.host.get(
         hostids=[hostid],
-        output=["hostid", "name", "status"],
-        selectInterfaces=["ip", "dns", "available", "error"]  # available 在接口里
+        output=["hostid", "name", "available", "error", "status"],
+        selectInterfaces=["ip", "dns"]
     )
     if not hosts:
         return f"❌ 无法获取主机信息: {host_identifier}"
 
     host = hosts[0]
-    host_name = host.get("name", "未知")
-    host_ip = host.get("interfaces", [{}])[0].get("ip", "N/A") if host.get("interfaces") else "N/A"
-
-    # 调试：打印完整的 host 和 interfaces
-    logger.info(f"Host data: {host}")
-    interfaces = host.get("interfaces", [])
-    logger.info(f"Interfaces: {interfaces}")
 
     # 3. 获取告警
     problems = client.problem.get(
@@ -2087,72 +2176,14 @@ def check_host_health(
         output=["eventid", "name", "severity", "clock"]
     )
 
-    # 4. 按标签获取各类指标（整合 inspect_host_performance 逻辑）
-    now = int(time.time())
-
-    # 获取主机所有启用的监控项
-    all_items = client.item.get(
-        hostids=hostid,
-        output=["itemid", "name", "key_", "lastvalue", "units", "value_type"],
-        filter={"status": 0}
+    # 4. 获取关键监控项
+    items = client.item.get(
+        hostids=[hostid],
+        search={"key_": ["system.cpu.util", "vm.memory.util", "vfs.fs.size"]},
+        output=["itemid", "name", "key_", "lastvalue", "units"]
     )
 
-    # 按关键 key_ 查找指标
-    def find_items_by_key(key_patterns):
-        results = []
-        for item in all_items:
-            key = item.get("key_", "").lower()
-            for pattern in key_patterns:
-                if pattern.lower() in key:
-                    results.append(item)
-                    break
-        return results
-
-    # 定义查询配置：查找关键指标
-    cpu_items = find_items_by_key(["system.cpu.util"])
-    mem_items = find_items_by_key(["vm.memory.util"])
-    disk_items = find_items_by_key(["vfs.fs.size[pused", "disk.utilization"])
-    fs_items = find_items_by_key(["vfs.fs.size", "vfs.fs.inode"])
-    oracle_items = find_items_by_key(["oracle"]) if include_oracle else []
-
-    configs = [
-        {"key": "cpu", "items": cpu_items, "trend": include_trends},
-        {"key": "memory", "items": mem_items, "trend": include_trends},
-        {"key": "disk", "items": disk_items[:1], "trend": False},
-        {"key": "filesystem", "items": fs_items[:3], "trend": False},
-    ]
-    if include_oracle:
-        configs.append({"key": "oracle", "items": oracle_items[:3], "trend": False})
-
-    metrics_data = {}
-    for cfg in configs:
-        items = cfg["items"]
-        logger.info(f"Key query {cfg['key']}: found {len(items)} items")
-        if items:
-            logger.info(f"  First: {items[0].get('name')} = {items[0].get('lastvalue')} {items[0].get('units')}")
-
-        trends = []
-        if cfg["trend"] and items and include_trends:
-            primary_item = items[0]["itemid"]
-            start_time = now - (trend_hours * 3600)
-            trends = client.trend.get(
-                itemids=primary_item,
-                time_from=start_time,
-                time_till=now,
-                output=["clock", "value_avg", "value_max"]
-            )
-
-        metrics_data[cfg["key"]] = {"items": items, "trends": trends}
-
-    # 调试：记录 metrics_data 内容
-    logger.info(f"Metrics data keys: {list(metrics_data.keys())}")
-    for key, data in metrics_data.items():
-        logger.info(f"{key}: {len(data['items'])} items, {len(data['trends'])} trends")
-        if data['items']:
-            logger.info(f"  First item: {data['items'][0].get('name')} = {data['items'][0].get('lastvalue')}")
-
-    # 5. 格式化输出
-    return _format_host_health(host_name, host_ip, host, problems, metrics_data, include_trends)
+    return _format_host_overview(host, problems, items)
 
 
 @mcp.tool()
@@ -2278,32 +2309,14 @@ def _resolve_host_identifier(client, identifier: str) -> Optional[str]:
     return None
 
 
-def _format_host_health(
-    host_name: str,
-    host_ip: str,
-    host: Dict,
-    problems: List[Dict],
-    metrics_data: Dict[str, Dict],
-    include_trends: bool
-) -> str:
-    """格式化主机健康报告（整合趋势数据）"""
+def _format_host_overview(host: Dict, problems: List[Dict], items: List[Dict]) -> str:
+    """格式化主机概览"""
     lines = []
 
     # 主机基本信息
-    # available 字段在接口中，不是在 host 中
-    interfaces = host.get("interfaces", [])
-    if interfaces:
-        # 取第一个接口的 available 状态和 IP
-        available_val = interfaces[0].get("available")
-    else:
-        available_val = None
-
-    if available_val is None or str(available_val) == "0":
-        status = "⚪ 未知（无Agent）"
-    elif str(available_val) == "1":
-        status = "🟢 正常"
-    else:
-        status = "🔴 不可用"
+    host_name = host.get("name", "未知")
+    host_ip = host.get("interfaces", [{}])[0].get("ip", "N/A") if host.get("interfaces") else "N/A"
+    status = "🟢 正常" if host.get("available") == "1" else "🔴 不可用"
 
     lines.append(f"## 🖥️ {host_name}")
     lines.append(f"- IP: {host_ip}")
@@ -2315,86 +2328,28 @@ def _format_host_health(
         lines.append(f"### ⚠️ 告警 ({len(problems)}个)")
         for p in problems[:3]:  # 只展示前3个
             desc = p.get("name", "无描述")
-            sev = int(p.get("severity", 0))
-            sev_emoji = {5: "🔴🔴", 4: "🔴", 3: "🟠", 2: "🟡", 1: "🔵"}.get(sev, "⚪")
+            sev = p.get("severity", 0)
+            sev_emoji = {5: "🔴🔴", 4: "🔴", 3: "🟠", 2: "🟡", 1: "🟢"}.get(sev, "⚪")
             lines.append(f"{sev_emoji} {desc}")
         lines.append("")
     else:
-        lines.append("✅ 无告警")
-        lines.append("")
+        lines.append("✅ 无告警\n")
 
-    # 关键指标表格
-    lines.append("### 📊 关键指标")
+    # 关键指标
+    key_metrics = {}
+    for item in items:
+        key = item.get("key_", "")
+        if "cpu.util" in key:
+            key_metrics["CPU"] = item.get("lastvalue", "N/A")
+        elif "memory.util" in key or "vm.memory.util" in key:
+            key_metrics["内存"] = item.get("lastvalue", "N/A")
+        elif "vfs.fs.size" in key and "pused" in key:
+            key_metrics["磁盘"] = item.get("lastvalue", "N/A")
 
-    # 收集指标数据
-    metrics_table = []
-
-    # CPU
-    cpu_data = metrics_data.get("cpu", {}).get("items", [])
-    if cpu_data:
-        cpu_item = cpu_data[0]
-        cpu_val = cpu_item.get("lastvalue", "N/A")
-        cpu_units = cpu_item.get("units", "")
-        cpu_name = cpu_item.get("name", "CPU")
-        cpu_trend = ""
-        if include_trends and metrics_data["cpu"].get("trends"):
-            trends = metrics_data["cpu"]["trends"]
-            if trends:
-                avg_val = sum(float(t.get("value_avg", 0)) for t in trends) / len(trends)
-                max_val = max(float(t.get("value_max", 0)) for t in trends)
-                cpu_trend = f"(avg:{avg_val:.1f}{cpu_units} max:{max_val:.1f}{cpu_units})"
-        metrics_table.append(f"- **{cpu_name}**: {cpu_val}{cpu_units} {cpu_trend}")
-
-    # 内存
-    mem_data = metrics_data.get("memory", {}).get("items", [])
-    if mem_data:
-        mem_item = mem_data[0]
-        mem_val = mem_item.get("lastvalue", "N/A")
-        mem_units = mem_item.get("units", "")
-        mem_name = mem_item.get("name", "内存")
-        mem_trend = ""
-        if include_trends and metrics_data["memory"].get("trends"):
-            trends = metrics_data["memory"]["trends"]
-            if trends:
-                avg_val = sum(float(t.get("value_avg", 0)) for t in trends) / len(trends)
-                max_val = max(float(t.get("value_max", 0)) for t in trends)
-                mem_trend = f"(avg:{avg_val:.1f}{mem_units} max:{max_val:.1f}{mem_units})"
-        metrics_table.append(f"- **{mem_name}**: {mem_val}{mem_units} {mem_trend}")
-
-    # 磁盘
-    disk_items = metrics_data.get("disk", {}).get("items", [])
-    for item in disk_items[:1]:  # 只显示第一个磁盘指标
-        disk_val = item.get("lastvalue", "N/A")
-        disk_name = item.get("name", "磁盘")
-        metrics_table.append(f"- **{disk_name}**: {disk_val}")
-
-    # 将指标表格添加到输出
-    if metrics_table:
-        lines.extend(metrics_table)
-    else:
-        lines.append("- 暂无关键指标数据")
-
-    # 文件系统
-    fs_items = metrics_data.get("filesystem", {}).get("items", [])
-    if fs_items:
-        lines.append("")
-        lines.append("### 💾 文件系统")
-        for item in fs_items[:3]:  # 最多显示3个
-            fs_val = item.get("lastvalue", "N/A")
-            fs_name = item.get("name", "文件系统")
-            lines.append(f"- {fs_name}: {fs_val}")
-
-    # Oracle
-    oracle_items = metrics_data.get("oracle", {}).get("items", [])
-    if oracle_items:
-        lines.append("")
-        lines.append("### 🗄️ Oracle 监控")
-        for item in oracle_items[:3]:
-            ora_val = item.get("lastvalue", "N/A")
-            ora_name = item.get("name", "Oracle")
-            lines.append(f"- {ora_name}: {ora_val}")
-
-    lines.append("")
+    if key_metrics:
+        lines.append("### 📊 关键指标")
+        for name, value in key_metrics.items():
+            lines.append(f"- {name}: {value}%")
 
     return "\n".join(lines)
 
@@ -2467,7 +2422,7 @@ def get_host_by_ip(ip: str) -> str:
     return format_response(hosts)
 
 
-# @mcp.tool()
+@mcp.tool()
 def inspect_host_performance(
         hostid: Union[str, int, List[str]],
         range_hours: Union[int, str] = 24

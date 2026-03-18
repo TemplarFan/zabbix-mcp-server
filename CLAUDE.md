@@ -14,22 +14,36 @@
 
 ### 已完成的阶段
 
-#### ✅ 阶段一 Step 1: 工具函数拆分
+#### ✅ 阶段一: 代码结构改造
 - [x] 创建 `src/utils/params.py` - 参数解析函数
 - [x] 创建 `src/utils/format.py` - 格式化输出函数
-- [x] 主文件改为从 utils 导入
+- [x] 创建 `src/client.py` - Zabbix API 客户端封装
+- [x] 创建 `src/main.py` - MCP 服务器入口文件
+- [x] 拆分 `src/tools/` 模块
+  - [x] `query.py` - 基础查询工具 (host_get, item_get, trigger_get, problem_get, event_get, history_get)
+  - [x] `analysis.py` - 分析摘要工具 (trend_get, trend_summary, get_problem_summary, check_host_health, quick_status)
+  - [x] `system.py` - 系统工具 (apiinfo_version, get_host_by_ip)
 
 #### ✅ 阶段二: Dify 体验优化
 - [x] 新增 `get_problem_summary` - 告警摘要（Markdown 格式）
 - [x] 新增 `check_host_health` - 主机健康检查
 - [x] 新增 `quick_status` - 整体状态巡检
+- [x] 新增 `trend_summary` - 趋势统计摘要（省 Token）
+
+#### ✅ 阶段三: 智能指标选择优化
+- [x] 优化 `item_get` 的 `key_metrics_only` 智能评分算法
+- [x] 支持用户实际的 Zabbix key 命名模式（`system.cpu.util`, `vm.memory.utilization`, `vfs.dev.util`）
+- [x] 修复非数值型 `lastvalue` 导致的转换错误
+- [x] 支持多厂商物理服务器（Huawei、Dell、HP、IPMI）
+- [x] 添加 Windows `perf_counter_en` 英文性能计数器支持
+- [x] 优化语义搜索，支持 `search_keyword` 智能匹配
 
 ### 待完成
 
-- [ ] 提取 `client.py` - Zabbix API 客户端封装
-- [ ] 创建 `services/` 业务逻辑层
-- [ ] 拆分 `tools/` 模块
-- [ ] 创建 `main.py` 入口文件
+- [ ] 创建 `services/` 业务逻辑层（可选）
+- [ ] 添加更多数据库监控指标支持（Oracle, MySQL 等）
+
+---
 
 ---
 
@@ -37,21 +51,30 @@
 
 ```
 src/
-├── zabbix_mcp_server.py    # 主文件，包含所有 MCP 工具
-├── utils/                   # 工具函数模块 ✅
+├── main.py                 # MCP 服务器入口文件 ✅
+├── client.py               # Zabbix API 客户端封装 ✅
+├── config.py               # 配置管理
+├── zabbix_mcp_server.py    # 兼容层（原主文件）
+├── utils/                  # 工具函数模块 ✅
 │   ├── __init__.py
-│   ├── params.py           # 参数解析函数
-│   └── format.py           # 格式化输出函数
-└── tools/                   # 工具模块（预留）
-    └── summary.py          # 摘要工具（已合并到主文件）
+│   ├── params.py          # 参数解析函数
+│   └── format.py          # 格式化输出函数
+└── tools/                  # MCP 工具模块 ✅
+    ├── __init__.py
+    ├── query.py           # 基础查询工具
+    ├── analysis.py        # 分析摘要工具
+    └── system.py          # 系统工具
 
 scripts/
 ├── start_server.py         # 启动脚本
 └── test_server.py          # 测试脚本
 
 config/
+├── prompt.md               # Dify 提示词配置
 └── .env.example            # 环境变量模板
 ```
+
+---
 
 ---
 
@@ -81,19 +104,26 @@ from utils.format import (
 )
 ```
 
-### 3. 主文件中的工具分类
+### 3. 工具模块分类
 
-#### 原始查询工具（返回 JSON）
-- `host_get`, `host_create`, `host_update`, `host_delete`
-- `item_get`, `item_create`, `item_update`, `item_delete`
-- `trigger_get`, `trigger_create`, `trigger_update`, `trigger_delete`
-- `problem_get`, `event_get`
-- `history_get`, `trend_get`
+#### tools/query.py - 基础查询工具（返回 JSON）
+- `host_get` - 查询主机列表
+- `item_get` - 查询监控项（支持 `key_metrics_only` 智能筛选）
+- `trigger_get` - 查询触发器
+- `problem_get` - 查询当前告警
+- `event_get` - 查询事件
+- `history_get` - 查询历史数据
 
-#### 摘要工具（返回 Markdown，适合 Dify）
+#### tools/analysis.py - 分析摘要工具（返回 Markdown）
 - `get_problem_summary` - 告警摘要（按严重程度统计）
 - `check_host_health` - 主机健康检查（一站式）
 - `quick_status` - 整体状态巡检
+- `trend_get` - 查询详细趋势数据
+- `trend_summary` - 趋势统计摘要（省 Token）
+
+#### tools/system.py - 系统工具
+- `apiinfo_version` - 查询 Zabbix API 版本
+- `get_host_by_ip` - 通过 IP 地址查询主机
 
 ---
 
@@ -182,15 +212,119 @@ from utils.format import (
 - 主机在线/离线统计
 - 告警分级统计
 
+### trend_summary
+
+**用途**：获取趋势统计摘要（极省 Token）
+
+相比 `trend_get`（返回详细时间序列），`trend_summary` 只返回：
+- 当前值、平均值/最大值/最小值
+- 趋势判断（上升/下降/平稳）
+- 关键时间点
+
+**参数**：
+- `itemids`: 监控项ID（最多3个，防止Token溢出）
+- `hours`: 查询时长（默认24小时）
+- `include_analysis`: 是否包含趋势分析和建议
+
 ---
+
+## 智能指标选择算法
+
+### item_get 的 key_metrics_only 模式
+
+当 `key_metrics_only=true` 时，`item_get` 使用智能评分算法自动选择关键性能指标（CPU/内存/磁盘）。
+
+### 评分规则
+
+算法基于以下类别对监控项进行评分：
+
+| 类别 | 关键字匹配 | 分值 |
+|------|-----------|------|
+| CPU使用率 | `cpu.util`, `system.cpu.util`, `system.cpu.load`, `perf_counter[\processor`, `perf_counter_en[\processor`, `huawei-server.systemCpuUsage`, `ipmi.sensor` | 100 |
+| 内存使用率 | `memory.util`, `memory.utilization`, `vm.memory.size[pavailable]`, `vm.memory.size[pused]`, `perf_counter[\memory`, `perf_counter_en[\memory`, `huawei-server.systemMemUsage`, `ipmi.sensor` | 95 |
+| 磁盘使用率 | `vfs.fs.dependent.size[pused]`, `vfs.fs.dependent.inode[pfree]`, `vfs.fs.dependent.inode[pused]`, `perf_counter[\logicaldisk`, `perf_counter_en[\logicaldisk`, `dell.server.hw.physicaldisk` | 95 |
+| 磁盘IO | `vfs.dev.io`, `vfs.dev.read`, `vfs.dev.write`, `vfs.dev.queue`, `perf_counter[\physicaldisk` | 70 |
+| 网络流量 | `net.if.in`, `net.if.out`, `net.if.total`, `perf_counter[\network interface` | 65 |
+| 进程数量 | `proc.num` | 30 |
+| 预测类 | `timeleft`, `forecast` | 10（降权） |
+
+### 支持的硬件类型
+
+`key_metrics_only` 自动识别以下硬件监控类型：
+
+| 类型 | Key 前缀/模式 | 示例 |
+|------|--------------|------|
+| Linux 标准 | `system.cpu.*`, `vm.memory.*`, `vfs.fs.*` | `system.cpu.load`, `vm.memory.size[pavailable]` |
+| Windows 性能计数器 | `perf_counter[\*`, `perf_counter_en[\*` | `perf_counter_en[\Processor(_Total)\% Processor Time]` |
+| Huawei 服务器 | `huawei-server.*`, `huawei.5300.v5[*` | `huawei-server.systemCpuUsage` |
+| Dell 服务器 | `dell.server.*` | `dell.server.hw.physicaldisk` |
+| IPMI 传感器 | `ipmi.sensor.*` | `ipmi.sensor[CPU1_Temp]` |
+| 通用 SNMP | `snmp.*` | `snmp.cpu[cpuUsage]` |
+
+### 降权规则
+
+- **非核心指标**: 包含 `uptime`, `version`, `check`, `status` 等关键词减 30 分
+- **阈值/动态计算**: 包含 `threshold`, `阈值`, `dynamic`, `动态` 等关键词减 50 分
+- **活跃状态**: 有最新数据且为数值型加 10 分
+
+### 使用示例
+
+```python
+# 获取主机的关键指标
+item_get(hostids="12345", key_metrics_only=true, limit=10)
+```
+
+**输出**：自动返回 CPU、内存、磁盘等关键指标，排除阈值、预测类指标。
+
+---
+
+## 语义搜索功能
+
+### item_get 的 search_keyword 参数
+
+`item_get` 支持通过 `search_keyword` 参数进行自然语言搜索，自动映射到 Zabbix key 模式：
+
+```python
+# 搜索磁盘相关指标
+item_get(hostids="12345", search_keyword="disk usage")
+
+# 搜索内存相关指标
+item_get(hostids="12345", search_keyword="memory")
+
+# 搜索网络流量
+item_get(hostids="12345", search_keyword="network traffic")
+```
+
+### 语义映射表
+
+| 关键词 | 匹配的 Key 模式 |
+|--------|----------------|
+| memory, 内存 | `*vm.memory*`, `*\memory\*`, `*perf_counter*memory*`, `*huawei*mem*usage*`, `*ipmi*memory*` |
+| cpu, processor, 处理器 | `*system.cpu*`, `*\processor\*`, `*perf_counter*processor*`, `*huawei*cpu*usage*`, `*ipmi*cpu*` |
+| disk, space, storage, 磁盘 | `*vfs.fs.dependent.size*`, `*vfs.fs.dependent.inode*`, `*\logicaldisk\*`, `*dell*disk*`, `*hardware*disk*` |
+| disk io, io | `*vfs.dev.io*`, `*vfs.dev.read*`, `*vfs.dev.write*`, `*vfs.dev.queue*`, `*physicaldisk*` |
+| network, traffic | `*net.if.in*`, `*net.if.out*`, `*net.if.total*`, `*network interface*` |
+| load, 负载 | `*system.cpu.load*`, `*cpu.load*` |
+
+### 与 key_metrics_only 结合使用
+
+```python
+# 先通过语义搜索找到相关监控项，再用 key_metrics_only 筛选关键指标
+item_get(hostids="12345", search_keyword="disk", key_metrics_only=true, limit=10)
+```
 
 ## 开发规范
 
 ### 添加新工具
 
-在 `zabbix_mcp_server.py` 中添加：
+在 `src/tools/` 目录下相应的文件中添加：
 
 ```python
+# src/tools/query.py
+from client import get_zabbix_client
+from utils.params import parse_int_param, parse_list_param
+from utils.format import format_response
+
 @mcp.tool()
 def my_new_tool(param: str) -> str:
     """
@@ -205,6 +339,19 @@ def my_new_tool(param: str) -> str:
     client = get_zabbix_client()
     # 业务逻辑
     return format_response(result)
+```
+
+然后在 `src/tools/__init__.py` 中导出：
+
+```python
+from tools.query import my_new_tool
+```
+
+最后在 `src/main.py` 中注册：
+
+```python
+from tools import my_new_tool
+mcp.tool()(my_new_tool)
 ```
 
 ### 工具分类原则
@@ -243,12 +390,33 @@ uv run python scripts/start_server.py
 npx @modelcontextprotocol/inspector
 ```
 
-### 4. Dify 集成测试
-- 更新 MCP 配置
-- 测试对话：
-  - "帮我看看整体状态"
-  - "172.18.6.220 的健康状况"
-  - "过去24小时的告警"
+### 4. 测试不同主机类型
+
+```bash
+# 测试 Linux 主机（Zabbix Agent2）
+uv run python -c "
+from src.tools.query import item_get
+print(item_get(hostids='10623', key_metrics_only=True, limit=10))
+"
+
+# 测试 Windows 主机（perf_counter）
+uv run python -c "
+from src.tools.query import item_get
+print(item_get(hostids='10624', search_keyword='cpu', key_metrics_only=True))
+"
+
+# 测试 Huawei 服务器
+uv run python -c "
+from src.tools.query import item_get
+print(item_get(hostids='10625', key_metrics_only=True))
+"
+
+# 测试语义搜索
+uv run python -c "
+from src.tools.query import item_get
+print(item_get(hostids='10623', search_keyword='disk usage', limit=5))
+"
+```
 
 ---
 
@@ -266,11 +434,24 @@ A:
 2. 检查 Dify 是否正确加载工具列表
 3. 查看服务器日志确认错误
 
-### Q: 如何调试
-A: 查看日志输出，重点看：
-- 参数解析是否正确
-- Zabbix API 返回的错误信息
-- 使用 DeepWiki 查询 API 限制
+### Q: 为什么查不到某些监控项
+A: 检查以下几点：
+1. 确认主机使用的 Zabbix Agent 版本（Agent 6.0 和 7.0 的 key 命名可能不同）
+2. Linux 主机可能使用 `vfs.fs.dependent.size` 而非 `vfs.fs.size`
+3. Windows 主机可能使用 `perf_counter_en` 而非 `perf_counter`
+4. 物理服务器可能使用厂商特定的 key（如 `huawei-server.*`, `dell.server.*`）
+
+### Q: key_metrics_only 返回的结果不准确
+A: 可以通过以下方式调试：
+1. 先不用 `key_metrics_only`，查看所有监控项的 `key_` 字段
+2. 确认目标指标的 key 命名模式
+3. 在 `src/tools/query.py` 的 `category_rules` 中添加新的关键字匹配
+
+### Q: 如何添加新的硬件类型支持
+A: 编辑 `src/tools/query.py`：
+1. 在 `category_rules` 中的相应类别添加新的关键字匹配
+2. 在 `semantic_map` 中添加语义搜索关键词
+3. 重启 MCP 服务器
 
 ---
 
@@ -296,6 +477,8 @@ ZABBIX_MCP_PORT=8000
 
 ## 版本历史
 
+- v1.3.0 - 支持多厂商物理服务器（Huawei、Dell、HP、IPMI），添加语义搜索功能，支持 Windows `perf_counter_en`
+- v1.2.0 - 优化智能指标选择算法，支持用户实际 Zabbix key 命名模式
 - v1.1.0 - 重构代码结构，新增摘要工具，修复 Zabbix 7.0 API 兼容性问题
 - v1.0.0 - 基础功能实现
 
