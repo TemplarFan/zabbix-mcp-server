@@ -467,34 +467,204 @@ def check_host_health(
 
     # 4. 获取关键指标
     try:
-        # 使用key_模式匹配获取关键指标（CPU/内存/磁盘）
-        key_patterns = [
-            ("cpu.util", "CPU使用率"),
-            ("vm.memory.size[pavailable]", "内存可用率"),
-            ("vm.memory.util", "内存使用率"),
-            ("vfs.fs.size", "磁盘使用率"),
+        # 获取主机的所有监控项（使用智能评分算法）
+        items = client.item.get(
+            hostids=[hostid],
+            output=["itemid", "name", "key_", "lastvalue", "units", "lastclock"],
+            limit=1000
+        )
+
+        # 智能评分算法（基于实际API查询结果）
+        category_rules = {
+            "cpu": {
+                "keywords": [
+                    # Linux 标准
+                    "system.cpu.util",
+                    # Windows perf_counter
+                    "perf_counter[\\processor", "perf_counter_en[\\processor",
+                    "processor information(_total)",
+                    # 华为服务器 iBMC
+                    "systemCpuUsage",
+                    # 华为存储 OceanStor
+                    "huawei.oceanstor.v6.controller.cpu",
+                    "huawei.5300.v5[hwInfoControllerCPUUsage",
+                    "huawei-server.systemCpuUsage",
+                    # Dell 服务器
+                    "dell.server.system.get",
+                    "dell.server.hw.diskarray",
+                    # 华鲲/浪潮等国产服务器
+                    "cpuAvailability", "cpuStatus[", "cpuCoreCount",
+                    # 通用硬件监控
+                    "hardware.cpu.usage",
+                    "ipmi.sensor", "snmp.cpu"
+                ],
+                "score": 100
+            },
+            "memory": {
+                "keywords": [
+                    # Linux 标准 - 使用率（已使用百分比）
+                    "vm.memory.size[pused]",
+                    "vm.memory.utilization", "vm.memory.util",
+                    # Linux 备选（原始值，降权）
+                    "vm.memory.size[used]",
+                    # Windows perf_counter
+                    "perf_counter[\\memory", "perf_counter_en[\\memory",
+                    # 华为服务器 iBMC
+                    "systemMemUsage",
+                    # 华为存储 OceanStor
+                    "huawei.oceanstor.v6.controller.memory",
+                    "huawei.5300.v5[hwInfoControllerMemoryUsage",
+                    "huawei-server.systemMemUsage",
+                    # 通用物理机
+                    "memoryStatus[", "memoryEntireStatus",
+                    "hardware.memory.usage",
+                    "ipmi.sensor", "snmp.memory"
+                ],
+                "score": 95
+            },
+            "disk": {
+                "keywords": [
+                    # Linux 空间使用率（高优先级）
+                    "vfs.fs.dependent.size[", ",pused]",
+                    # Linux inode（备选）
+                    "vfs.fs.dependent.inode[", ",pfree]",
+                    # Windows perf_counter
+                    "perf_counter[\\logicaldisk", "perf_counter_en[\\logicaldisk",
+                    "perf_counter[\\physicaldisk", "perf_counter_en[\\physicaldisk",
+                    # 华为存储
+                    "huawei.oceanstor.v6.capacity.used",
+                    "huawei.oceanstor.v6.lun.bps.total",
+                    # Dell 服务器磁盘
+                    "dell.server.hw.physicaldisk",
+                    # 国产服务器
+                    "hardDiskStatus[", "hardDiskEntireStatus",
+                    "diskPartitionUsage",
+                    # 通用硬件
+                    "hardware.disk.usage"
+                ],
+                "score": 95
+            },
+            "network": {
+                "keywords": [
+                    "net.if.in[", "net.if.out[", "net.if.total[",
+                    "perf_counter[\\network interface", "perf_counter_en[\\network interface",
+                    "huawei.oceanstor.v6.port.bps"
+                ],
+                "score": 65
+            }
+        }
+
+        # 降权关键词（避免误伤正常指标）
+        demote_keywords = [
+            "threshold", "阈值", "预警", "warn", "dynamic", "动态",
+            "forecast", "timeleft", "prediction",
+            "uptime", "version", "check", "ping"
         ]
 
-        all_key_items = []
-        for pattern, category in key_patterns:
-            items = client.item.get(
-                hostids=[hostid],
-                search={"key_": f"{pattern}*"},
-                searchWildcardsEnabled=True,
-                output=["itemid", "name", "lastvalue", "units"],
-                limit=3
-            )
-            for item in items:
-                item["category"] = category
-            all_key_items.extend(items)
+        # 优先关键词（带]后缀的优先匹配Zabbix key模式）
+        prefer_keywords = ["pused]", "pfree]", "utilization", "usage", "% used"]
 
-        # 去重
-        seen_ids = set()
+        scored_items = []
+        for item in items:
+            name = item.get("name", "").lower()
+            key = item.get("key_", "").lower()
+            score = 0
+            category = None
+
+            # 分类评分
+            for cat, rule in category_rules.items():
+                for kw in rule["keywords"]:
+                    if kw.lower() in key or kw.lower() in name:
+                        score += rule["score"]
+                        category = cat
+                        break
+
+            if category and score > 0:
+                # 优先关键词加分
+                for pk in prefer_keywords:
+                    if pk in key or pk in name:
+                        score += 15
+
+                # 磁盘：优先空间使用率(size)而非inode
+                if category == "disk":
+                    if "vfs.fs.dependent.size[" in key:
+                        score += 20  # 额外加分，优先显示空间使用率
+                    elif "vfs.fs.dependent.inode[" in key:
+                        score -= 10  # inode降权
+
+                # 内存：优先使用率指标(pused/utilization)而非可用(available)
+                if category == "memory":
+                    if "pused]" in key or "utilization" in key or "usage" in key:
+                        score += 15  # 使用率指标优先
+                    elif "available]" in key or "free]" in key:
+                        score -= 10  # 可用/剩余空间降权
+                    # 降权swap/paging，避免与主内存混淆
+                    if "swap" in key or "paging" in key:
+                        score -= 40  # 大幅降权swap
+
+                # 降权关键词减分
+                for dk in demote_keywords:
+                    if dk in key or dk in name:
+                        score -= 30
+
+                # 活跃状态加分
+                lastvalue = item.get("lastvalue")
+                if lastvalue:
+                    try:
+                        if float(lastvalue) >= 0:
+                            score += 10
+                    except:
+                        pass
+
+                item["category"] = category
+                item["score"] = score
+                scored_items.append(item)
+
+        # 按评分降序，每类取最高分（磁盘允许多个）
+        category_items = {}
+        disk_items = []  # 特殊处理磁盘
+        for item in sorted(scored_items, key=lambda x: -x["score"]):
+            cat = item["category"]
+            if cat == "disk":
+                # 磁盘最多取10个（不同盘符），按实际使用率排序
+                if len(disk_items) < 10:
+                    # 检查是否已存在相同盘符的
+                    key = item.get("key_", "")
+                    is_duplicate = False
+                    for existing in disk_items:
+                        existing_key = existing.get("key_", "")
+                        # 提取盘符部分进行比较（如 size[C:, -> C:）
+                        key_drive = key.split("size[")[1].split(",")[0] if "size[" in key else key
+                        existing_drive = existing_key.split("size[")[1].split(",")[0] if "size[" in existing_key else existing_key
+                        if key_drive == existing_drive:
+                            is_duplicate = True
+                            break
+                    if not is_duplicate:
+                        disk_items.append(item)
+            elif cat not in category_items:
+                category_items[cat] = item
+
+        # 将磁盘项目加入（按使用率排序，高的在前）
+        disk_items_sorted = sorted(
+            disk_items,
+            key=lambda x: float(x.get("lastvalue", 0)) if x.get("lastvalue") else 0,
+            reverse=True
+        )
+        for disk_item in disk_items_sorted:
+            category_items[f"disk_{len([k for k in category_items if k.startswith('disk')])}"] = disk_item
+
+        # 转为分类标签
+        category_labels = {
+            "cpu": "CPU使用率",
+            "memory": "内存使用率",
+            "disk": "磁盘使用率",
+            "network": "网络流量"
+        }
+
         key_items = []
-        for item in all_key_items:
-            if item["itemid"] not in seen_ids:
-                seen_ids.add(item["itemid"])
-                key_items.append(item)
+        for cat, item in category_items.items():
+            item["category"] = category_labels.get(cat, cat)
+            key_items.append(item)
 
         if key_items:
             result += "### 关键指标\n"
@@ -503,6 +673,21 @@ def check_host_health(
                 name = item.get("name", "Unknown")
                 value = item.get("lastvalue", "N/A")
                 units = item.get("units", "")
+                key = item.get("key_", "")
+
+                # 过滤inode项，只保留空间使用率
+                if "inode" in key.lower():
+                    continue
+
+                # 简化分区名称
+                if "FS [" in name:
+                    # 提取分区路径，如 FS [/usr]: Space: Used, in % -> /usr分区使用率
+                    try:
+                        partition = name.split("FS [")[1].split("]")[0]
+                        name = f"{partition}分区使用率"
+                    except:
+                        pass
+
                 # 格式化数值
                 try:
                     if float(value) > 100 and units == "B":
@@ -523,8 +708,12 @@ def check_host_health(
     return result
 
 
-def quick_status() -> str:
+def quick_status(include_disabled: bool = True, include_offline: bool = True) -> str:
     """快速查看Zabbix整体状态 - 适合每日巡检。
+
+    Args:
+        include_disabled: 是否列出禁用主机列表
+        include_offline: 是否列出离线主机列表
 
     Returns:
         Markdown格式状态摘要
@@ -533,13 +722,74 @@ def quick_status() -> str:
 
     try:
         # 1. 主机统计
+        # Zabbix 7.0: 可用性字段在 interfaces 中，需要通过 selectInterfaces 获取
         hosts = client.host.get(
-            output=["hostid", "available"],
+            output=["hostid", "host", "name", "status"],
+            selectInterfaces=["interfaceid", "available", "type", "ip"],
             limit=10000
         )
         total_hosts = len(hosts)
-        available_hosts = sum(1 for h in hosts if h.get("available") == "0")
-        unavailable_hosts = total_hosts - available_hosts
+
+        # status: 0=启用, 1=禁用
+        enabled_hosts = sum(1 for h in hosts if h.get("status") == "0")
+        disabled_hosts = sum(1 for h in hosts if h.get("status") == "1")
+
+        # 判断主机在线状态（基于 interfaces 中的 available 字段）
+        # interface.available: 1=可用, 2=不可用, 0=未知
+        online_hosts = 0
+        offline_hosts = 0
+        unknown_hosts = 0
+
+        # 收集需要列出的主机
+        disabled_host_list = []
+        offline_host_list = []
+
+        for h in hosts:
+            host_status = h.get("status", "0")
+            host_name = h.get("name", "Unknown")
+            host_id = h.get("hostid", "N/A")
+            interfaces = h.get("interfaces", [])
+
+            # 记录禁用的主机
+            if host_status == "1":
+                disabled_host_list.append({
+                    "hostid": host_id,
+                    "name": host_name,
+                    "ip": interfaces[0].get("ip", "N/A") if interfaces else "N/A"
+                })
+                continue
+
+            # 对于启用的主机，判断可用性
+            if not interfaces:
+                unknown_hosts += 1
+                continue
+
+            # 检查所有接口的可用性状态
+            has_online = False
+            has_offline = False
+            offline_ips = []
+
+            for iface in interfaces:
+                avail = iface.get("available", "0")
+                ip = iface.get("ip", "N/A")
+                if avail == "1":
+                    has_online = True
+                elif avail == "2":
+                    has_offline = True
+                    offline_ips.append(ip)
+
+            # 判断逻辑并记录离线主机
+            if has_online:
+                online_hosts += 1
+            elif has_offline:
+                offline_hosts += 1
+                offline_host_list.append({
+                    "hostid": host_id,
+                    "name": host_name,
+                    "ip": offline_ips[0] if offline_ips else (interfaces[0].get("ip", "N/A") if interfaces else "N/A")
+                })
+            else:
+                unknown_hosts += 1
 
         # 2. 告警统计
         now = int(time.time())
@@ -558,18 +808,53 @@ def quick_status() -> str:
         result = "## Zabbix 整体状态\n\n"
 
         result += "### 主机状态\n"
-        result += f"- 总数: {total_hosts}\n"
-        result += f"- 在线: {available_hosts}\n"
-        result += f"- 离线: {unavailable_hosts}\n\n"
+        result += f"- **总数**: {total_hosts} 台\n"
+        result += f"- **启用**: {enabled_hosts} 台（在线 {online_hosts} / 离线 {offline_hosts} / 未知 {unknown_hosts}）\n"
+        result += f"- **停用**: {disabled_hosts} 台\n\n"
 
+        # 计算可用率（基于启用主机）
+        if enabled_hosts > 0:
+            availability_rate = (online_hosts / enabled_hosts) * 100
+            result += f"> 主机可用率: **{availability_rate:.1f}%** ({online_hosts}/{enabled_hosts})\n\n"
+
+        # 4. 列出停用主机
+        if include_disabled and disabled_host_list:
+            result += f"### 停用主机（{len(disabled_host_list)} 台）\n"
+            result += "| 主机名 | IP地址 |\n"
+            result += "|--------|--------|\n"
+            for h in disabled_host_list[:20]:  # 最多显示20台
+                # 截断长名称
+                name = h["name"][:40] if len(h["name"]) > 40 else h["name"]
+                result += f"| {name} | {h['ip']} |\n"
+            if len(disabled_host_list) > 20:
+                result += f"| ... 还有 {len(disabled_host_list) - 20} 台 | ... |\n"
+            result += "\n"
+
+        # 5. 列出离线主机
+        if include_offline and offline_host_list:
+            result += f"### 离线主机（{len(offline_host_list)} 台）\n"
+            result += "| 主机名 | IP地址 |\n"
+            result += "|--------|--------|\n"
+            for h in offline_host_list:
+                # 截断长名称
+                name = h["name"][:40] if len(h["name"]) > 40 else h["name"]
+                result += f"| {name} | {h['ip']} |\n"
+            result += "\n"
+
+        # 6. 告警统计
         result += "### 24小时告警统计\n"
         severity_names = {"5": "灾难", "4": "严重", "3": "一般", "2": "警告", "1": "信息", "0": "未分类"}
         severity_icons = {"5": "🚨", "4": "🔴", "3": "🟠", "2": "🟡", "1": "🔵", "0": "⚪"}
 
+        has_problems = False
         for sev in ["5", "4", "3", "2", "1", "0"]:
             count = severity_count.get(sev, 0)
             if count > 0:
+                has_problems = True
                 result += f"- {severity_icons[sev]} {severity_names[sev]}: {count}个\n"
+
+        if not has_problems:
+            result += "- 无告警\n"
 
         total_problems = sum(severity_count.values())
         result += f"\n**告警总计: {total_problems}**\n"

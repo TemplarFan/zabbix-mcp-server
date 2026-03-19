@@ -40,7 +40,7 @@ def test_import() -> bool:
     """
     try:
         print("🔍 Testing module import...")
-        from zabbix_mcp_server import get_zabbix_client
+        from client import get_zabbix_client
         print("✅ Module import successful")
         return True
     except ImportError as e:
@@ -102,8 +102,8 @@ def test_connection() -> bool:
     print("\n🔍 Testing Zabbix connection...")
     
     try:
-        from zabbix_mcp_server import get_zabbix_client
-        
+        from client import get_zabbix_client
+
         # Test getting client and API version
         client = get_zabbix_client()
         version_info = client.apiinfo.version()
@@ -132,7 +132,7 @@ def test_basic_operations() -> bool:
     print("\n🔍 Testing basic operations...")
     
     try:
-        from zabbix_mcp_server import get_zabbix_client
+        from client import get_zabbix_client
         client = get_zabbix_client()
         
         # Test host groups (usually always present)
@@ -176,8 +176,8 @@ def test_transport_config() -> bool:
     print("\n🔍 Testing transport configuration...")
     
     try:
-        from zabbix_mcp_server import get_transport_config
-        
+        from client import get_transport_config
+
         config = get_transport_config()
         transport = config["transport"]
         
@@ -224,8 +224,8 @@ def test_read_only_mode() -> bool:
     print("\n🔍 Testing read-only mode...")
     
     try:
-        from zabbix_mcp_server import validate_read_only
-        
+        from client import validate_read_only
+
         # This should raise an exception in read-only mode
         validate_read_only()
         print("❌ Read-only mode not working correctly")
@@ -261,7 +261,7 @@ def show_summary(tests_passed: int, total_tests: int) -> None:
         
         print("\nNext steps:")
         print("1. Configure your MCP client (see MCP_SETUP.md)")
-        print("2. Start the server: uv run python src/zabbix_mcp_server.py")
+        print("2. Start the server: uv run python scripts/start_server.py")
         print("3. Test with your MCP client")
         
     else:

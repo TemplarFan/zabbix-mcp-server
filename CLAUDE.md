@@ -37,6 +37,8 @@
 - [x] 支持多厂商物理服务器（Huawei、Dell、HP、IPMI）
 - [x] 添加 Windows `perf_counter_en` 英文性能计数器支持
 - [x] 优化语义搜索，支持 `search_keyword` 智能匹配
+- [x] 优化 `check_host_health` 磁盘分区显示（支持多分区、按使用率排序）
+- [x] 修复 `check_host_health` 内存使用率显示（改为使用率而非可用空间）
 
 ### 待完成
 
@@ -203,6 +205,70 @@ from utils.format import (
 - 主机基本信息（IP、状态）
 - 当前告警列表
 - 关键指标（CPU/内存/磁盘）
+
+### check_host_health 详细说明
+
+**用途**：一站式检查主机健康状况，自动识别多平台监控项
+
+**支持的平台**：
+| 平台 | Key 模式 | 示例 |
+|------|----------|------|
+| Linux (Agent2) | `system.cpu.util`, `vm.memory.size[pused]`, `vfs.fs.dependent.size` | CPU使用率、内存使用率、分区使用率 |
+| Windows | `perf_counter[\Processor`, `perf_counter[\Memory`, `perf_counter[\LogicalDisk` | 英文/中文性能计数器 |
+| Huawei 服务器 | `huawei-server.systemCpuUsage`, `huawei-server.systemMemUsage` | iBMC 监控 |
+| IPMI | `ipmi.sensor[...]` | 硬件传感器 |
+
+**磁盘显示优化**（2025-03-19 更新）：
+- 支持最多 **10个分区**，自动去重（按盘符/挂载点）
+- 按**使用率从高到低**排序，优先显示空间紧张的分区
+- 自动简化分区名称：`FS [/usr]` → `/usr分区使用率`
+- 自动过滤 inode 监控项，仅显示空间使用率
+
+**内存显示优化**（2025-03-19 更新）：
+- 统一显示**内存使用率**（已使用百分比）
+- Linux: `vm.memory.size[pused]`
+- Windows: `perf_counter[\Memory\% Committed Bytes In Use]`
+- 自动过滤 swap/paging 相关指标
+
+**使用示例**：
+```python
+# 通过 IP 查询
+check_host_health(host_identifier="172.18.3.105")
+
+# 通过主机名查询
+check_host_health(host_identifier="server-01")
+
+# 通过 hostid 查询
+check_host_health(host_identifier="10623")
+```
+
+**返回示例**：
+```markdown
+## 主机健康检查: server-01
+
+### 基本信息
+- **主机名**: server-01
+- **IP**: 172.18.3.105
+- **状态**: 在线
+
+### 当前告警
+| 时间 | 问题 | 级别 |
+|------|------|------|
+| 03-19 10:30 | CPU使用率超过阈值 | 严重 |
+
+### 关键指标
+
+**CPU使用率**: 78.5%
+
+**内存使用率**: 65.2%
+
+**磁盘使用率**:
+| 分区 | 使用率 |
+|------|--------|
+| C: | 85.3% |
+| D: | 45.2% |
+| E: | 12.1% |
+```
 
 ### quick_status
 
@@ -453,6 +519,24 @@ A: 编辑 `src/tools/query.py`：
 2. 在 `semantic_map` 中添加语义搜索关键词
 3. 重启 MCP 服务器
 
+### Q: 为什么某些主机查不到磁盘数据
+A: 可能原因：
+1. **Zabbix Agent 版本过低**：`vfs.fs.dependent.discovery` 需要 Agent 3.4+，旧版本（如 3.0.x）不支持
+2. **未配置监控项**：确保主机已应用 Template OS Linux/Windows 模板
+3. **Agent 未运行**：检查目标主机的 Agent 服务状态
+
+**诊断方法**：
+```bash
+# 查看主机支持的监控项
+item_get(hostids="12345", search_keyword="vfs.fs")
+
+# 如果没有返回结果，说明 Agent 版本问题或模板未应用
+```
+
+**解决方案**：
+- 升级 Zabbix Agent 到 6.0+ 或 7.0+
+- 确认模板已正确应用到主机
+
 ---
 
 ## 环境变量
@@ -477,6 +561,7 @@ ZABBIX_MCP_PORT=8000
 
 ## 版本历史
 
+- v1.3.1 - 优化 `check_host_health`：支持多分区显示（最多10个）、按使用率排序、内存显示改为使用率
 - v1.3.0 - 支持多厂商物理服务器（Huawei、Dell、HP、IPMI），添加语义搜索功能，支持 Windows `perf_counter_en`
 - v1.2.0 - 优化智能指标选择算法，支持用户实际 Zabbix key 命名模式
 - v1.1.0 - 重构代码结构，新增摘要工具，修复 Zabbix 7.0 API 兼容性问题

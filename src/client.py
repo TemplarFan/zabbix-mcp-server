@@ -101,3 +101,20 @@ def get_zabbix_version() -> Optional[str]:
         return "7.0.x"  # Placeholder, could be retrieved from API if needed
     except Exception:
         return None
+
+
+def get_transport_config() -> dict:
+    """Get transport configuration from environment.
+
+    Returns:
+        Dictionary with transport settings
+    """
+    transport = os.getenv("ZABBIX_MCP_TRANSPORT", "stdio")
+
+    config = {
+        "transport": transport,
+        "host": os.getenv("ZABBIX_MCP_HOST", "127.0.0.1"),
+        "port": int(os.getenv("ZABBIX_MCP_PORT", "8000")),
+    }
+
+    return config
