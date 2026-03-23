@@ -34,8 +34,7 @@ from tools import (
     item_get,
     # Trigger tools
     trigger_get,
-    # Problem tools
-    problem_get,
+    # Event tools
     event_get,
     # History tools
     history_get,
@@ -60,8 +59,7 @@ mcp.tool()(item_get)
 # Register trigger tools
 mcp.tool()(trigger_get)
 
-# Register problem tools
-mcp.tool()(problem_get)
+# Register event tools
 mcp.tool()(event_get)
 
 # Register history tools

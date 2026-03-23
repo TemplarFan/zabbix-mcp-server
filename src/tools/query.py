@@ -96,11 +96,14 @@ def item_get(
     3. 查询主机的关键性能指标（传 hostids + key_metrics_only=true）
        关键指标包括：CPU使用率、内存使用率、磁盘使用率，每个类别只返回1个最佳指标
 
+    重要提示：Zabbix API 不支持 offset 翻页，只能用 limit 限制返回数量。
+    如需查看更多监控项，请使用 search 参数过滤（如搜索 "disk"、"memory" 等关键词）。
+
     Args:
         itemids: 监控项ID列表
         hostids: 主机ID列表
         search: 搜索条件（如 {"name": "cpu"}）
-        limit: 返回数量限制
+        limit: 返回数量限制（默认20）
         output: 输出字段
         key_metrics_only: 仅返回关键性能指标（CPU/内存/磁盘），用于趋势分析场景。
                          自动排除预测类、阈值类、状态类指标。默认False。
@@ -580,9 +583,28 @@ def trigger_get(
     output: Union[str, List[str], None] = None,
     search: Union[Dict[str, str], str, None] = None,
     filter: Union[Dict[str, Any], str, None] = None,
-    limit: Union[int, str, None] = None
+    limit: Union[int, str, None] = 20,
+    include_expression: bool = False
 ) -> str:
-    """Get triggers from Zabbix with optional filtering."""
+    """获取触发器列表。
+
+    重要提示：
+    - 默认返回20条（可通过 limit 调整，建议不超过50）
+    - 默认不返回 expression 字段（节省Token），如需请设置 include_expression=true
+    - 建议按 priority 筛选（如 priority=3,4,5 只看严重/紧急/灾难级别）
+
+    Args:
+        triggerids: 触发器ID列表
+        hostids: 主机ID列表
+        groupids: 主机组ID列表
+        templateids: 模板ID列表
+        priority: 严重级别（0=未分类, 1=信息, 2=警告, 3=一般严重, 4=严重, 5=灾难）
+        output: 输出字段列表（默认返回核心字段）
+        search: 搜索条件（如 {"description": "CPU"}）
+        filter: 过滤条件
+        limit: 返回数量限制（默认20，建议不超过50以防Token溢出）
+        include_expression: 是否返回触发器表达式（默认false，expression很长会占用大量Token）
+    """
     client = get_zabbix_client()
 
     # Parse parameters
@@ -592,7 +614,7 @@ def trigger_get(
     templateids = parse_list_param(templateids)
     search = parse_dict_param(search)
     filter = parse_dict_param(filter)
-    limit = parse_int_param(limit)
+    limit = parse_int_param(limit) or 20
 
     # Parse priority parameter
     if priority is not None:
@@ -609,12 +631,14 @@ def trigger_get(
                 else:
                     priority = int(priority)
 
-    # Default to core fields for better performance
+    # Default to core fields for better performance, exclude expression to save tokens
     if output is None:
         output = ["triggerid", "description", "priority", "status", "state",
-                  "value", "lastchange", "error", "expression"]
+                  "value", "lastchange", "error"]
+        if include_expression:
+            output.append("expression")
 
-    params = {"output": output}
+    params = {"output": output, "limit": limit}
 
     if triggerids:
         params["triggerids"] = triggerids
@@ -630,29 +654,72 @@ def trigger_get(
         params["search"] = search
     if filter:
         params["filter"] = filter
-    if limit:
-        params["limit"] = limit
 
     result = client.trigger.get(**params)
     return format_response(result)
 
 
-def problem_get(
+def event_get(
     eventids: Union[List[str], str, None] = None,
     groupids: Union[List[str], str, None] = None,
     hostids: Union[List[str], str, None] = None,
     objectids: Union[List[str], str, None] = None,
-    acknowledged: Optional[bool] = None,
+    source: Union[int, str, None] = None,
+    object_: Union[int, str, None] = None,
+    value: Union[int, str, None] = None,
     severities: Union[List[int], str, None] = None,
     time_from: Union[int, str, None] = None,
     time_till: Union[int, str, None] = None,
-    recent: Optional[bool] = None,
-    limit: Union[int, str, None] = None,
+    limit: Union[int, str, None] = 10,
     output: Any = None
 ) -> str:
-    """Get current problems (active alerts) from Zabbix.
+    """获取事件列表（支持 selectHosts 关联主机信息）。
 
-    Note: Zabbix 7.0 problem.get only supports sortfield='eventid'
+    重要提示：本函数不支持 'offset' 参数翻页，请使用 'time_till' 进行翻页。
+
+    Args:
+        eventids: 事件ID列表（可选）
+        groupids: 主机组ID列表（可选）
+        hostids: 主机ID（支持单个ID或逗号分隔的列表）
+        objectids: 对象ID（触发器ID等，可选）
+        source: 事件来源（0=触发器, 1=自动发现, 2=自动注册, 3=内部事件）
+        object_: 事件对象类型（0=触发器, 1=监控项, 2=LLD规则等）
+        value: 事件状态过滤（0=问题, 1=恢复）。注意：Zabbix 7.0 API不支持此参数作为输入，
+               会在返回结果后本地过滤
+        severities: 严重级别（0-5）列表或逗号分隔字符串
+        time_from: 起始时间（UNIX时间戳），用于时间范围过滤
+        time_till: 截止时间（UNIX时间戳），用于翻页（取上一页最后一条的clock）
+        limit: 返回事件数量上限（默认10条）
+        output: 返回字段列表
+
+    常用查询示例：
+        # 查当前告警（问题状态的事件）- 必须同时指定 source 和 object_
+        event_get(source=0, object_=0, value=0, limit=20)
+
+        # 查所有事件（包括已恢复的）
+        event_get(source=0, object_=0, limit=20)
+
+    翻页说明（重要）：
+        1. 第1页：获取最新事件
+           result = event_get(source=0, object_=0, value=0, limit=20)
+
+        2. 找到第1页结果中最旧那条的 clock 值（注意是10位数字，如 1773976329）
+           注意：必须完整复制，不要截断！
+
+        3. 第2页：用 time_till 参数传入上一步的 clock 值
+           event_get(source=0, object_=0, value=0, limit=20, time_till=1773976329)
+
+        4. 重复步骤 2-3 直到返回为空
+
+        ⚠️ 警告：time_till 必须是完整的10位时间戳，不要遗漏任何数字！
+
+        🛑 停止条件（满足任一即可停止翻页）：
+           - 返回结果为空（没有更多数据了）
+           - 已经获取了足够多的事件（如超过100条）
+           - 用户没有明确要求"查看更多"或"下一页"
+           - 当前展示的内容已经回答了用户的问题
+
+        💡 提示：默认情况下，只查1-2页就足够了，不要无限翻页！
     """
     client = get_zabbix_client()
 
@@ -661,11 +728,14 @@ def problem_get(
     groupids = parse_list_param(groupids)
     hostids = parse_list_param(hostids)
     objectids = parse_list_param(objectids)
-    limit = parse_int_param(limit) or 20
+    limit = parse_int_param(limit) or 10
     time_from = parse_int_param(time_from)
     time_till = parse_int_param(time_till)
+    source = parse_int_param(source)
+    object_val = parse_int_param(object_)
+    value_filter = parse_int_param(value)
 
-    # Parse severities
+    # Parse severities for event_get
     if severities is not None:
         if isinstance(severities, str):
             try:
@@ -677,89 +747,16 @@ def problem_get(
                 else:
                     severities = [int(severities)]
 
-    # Default output
+    # Default output for event_get - include value field for local filtering
     if output is None:
-        output = ["eventid", "name", "severity", "clock", "acknowledged", "objectid"]
+        output = ["eventid", "name", "severity", "clock", "acknowledged", "objectid", "value"]
+    elif isinstance(output, list) and "value" not in output:
+        output = list(output) + ["value"]
 
     params = {
         "output": output,
         "limit": limit,
-        "sortfield": "eventid",
-        "sortorder": "DESC"
-    }
-
-    if eventids:
-        params["eventids"] = eventids
-    if groupids:
-        params["groupids"] = groupids
-    if hostids:
-        params["hostids"] = hostids
-    if objectids:
-        params["objectids"] = objectids
-    if severities is not None:
-        params["severities"] = severities
-    if acknowledged is not None:
-        params["acknowledged"] = acknowledged
-    if recent is not None:
-        params["recent"] = recent
-    if time_from:
-        params["time_from"] = time_from
-    if time_till:
-        params["time_till"] = time_till
-
-    try:
-        result = client.problem.get(**params)
-        return format_response(result)
-    except Exception as e:
-        return f"查询失败: {str(e)}"
-
-
-def event_get(
-    eventids: Union[List[str], str, None] = None,
-    groupids: Union[List[str], str, None] = None,
-    hostids: Union[List[str], str, None] = None,
-    objectids: Union[List[str], str, None] = None,
-    source: Optional[int] = None,
-    object: Optional[int] = None,
-    valued: Optional[int] = None,
-    severities: Union[List[int], str, None] = None,
-    time_from: Union[int, str, None] = None,
-    time_till: Union[int, str, None] = None,
-    limit: Union[int, str, None] = None,
-    output: Any = None
-) -> str:
-    """Get events from Zabbix with optional filtering."""
-    client = get_zabbix_client()
-
-    # Parse parameters
-    eventids = parse_list_param(eventids)
-    groupids = parse_list_param(groupids)
-    hostids = parse_list_param(hostids)
-    objectids = parse_list_param(objectids)
-    limit = parse_int_param(limit) or 20
-    time_from = parse_int_param(time_from)
-    time_till = parse_int_param(time_till)
-
-    # Parse severities
-    if severities is not None:
-        if isinstance(severities, str):
-            try:
-                parsed = json.loads(severities)
-                severities = [int(s) for s in parsed] if isinstance(parsed, list) else [int(parsed)]
-            except:
-                if ',' in severities:
-                    severities = [int(s.strip()) for s in severities.split(',')]
-                else:
-                    severities = [int(severities)]
-
-    # Default output
-    if output is None:
-        output = ["eventid", "name", "severity", "clock", "acknowledged", "objectid"]
-
-    params = {
-        "output": output,
-        "limit": limit,
-        "sortfield": "eventid",
+        "sortfield": "clock",
         "sortorder": "DESC",
         "selectHosts": ["hostid", "name"]
     }
@@ -776,10 +773,8 @@ def event_get(
         params["severities"] = severities
     if source is not None:
         params["source"] = source
-    if object is not None:
-        params["object"] = object
-    if valued is not None:
-        params["valued"] = valued
+    if object_val is not None:
+        params["object"] = object_val
     if time_from:
         params["time_from"] = time_from
     if time_till:
@@ -787,6 +782,9 @@ def event_get(
 
     try:
         result = client.event.get(**params)
+        # Local filtering by value since Zabbix 7.0 API doesn't support 'value' as input param
+        if value_filter is not None and result:
+            result = [item for item in result if int(item.get("value", -1)) == value_filter]
         return format_response(result)
     except Exception as e:
         return f"查询失败: {str(e)}"
@@ -801,26 +799,60 @@ def history_get(
     sortfield: str = "clock",
     sortorder: str = "DESC"
 ) -> str:
-    """Get history data from Zabbix.
+    """获取监控项历史数据（原始采集值）。
+
+    用于查询监控项的历史数值，支持时间范围过滤。
+    如需聚合统计（每小时最大/最小/平均值），请使用 trend_get。
 
     Args:
-        itemids: List of item IDs to get history for
-        history: History type (0=float, 1=character, 2=log, 3=unsigned, 4=text)
-        time_from: Start time (Unix timestamp)
-        time_till: End time (Unix timestamp)
-        limit: Maximum number of results
-        sortfield: Field to sort by
-        sortorder: Sort order (ASC or DESC)
+        itemids: 监控项ID（必须），可通过 item_get 查询获取
+        history: 数据类型（0=float浮点, 1=character字符, 2=log日志, 3=unsigned整数, 4=text文本）
+        time_from: 起始时间，支持：
+                   - Unix时间戳（如 1773990849）
+                   - 相对时间（如 "1h"=1小时前, "24h"=24小时前, "7d"=7天前）
+        time_till: 截止时间，支持格式同 time_from，不传默认为当前时间
+        limit: 返回条数限制（默认10）
+        sortfield: 排序字段（默认 "clock" 按时间）
+        sortorder: 排序方向（"ASC" 升序 或 "DESC" 降序，默认降序）
+
+    常用查询示例：
+        # 查询最近1小时的数据（推荐：使用相对时间字符串）
+        history_get(itemids="424943", history=0, time_from="1h", limit=100)
+
+        # 查询最近2小时的数据（推荐）
+        history_get(itemids="424943", history=0, time_from="2h", limit=100)
+
+        # 查询最近24小时的数据（推荐）
+        history_get(itemids="424943", history=0, time_from="24h", limit=100)
+
+        # 查询最近7天的数据（推荐）
+        history_get(itemids="424943", history=0, time_from="7d", limit=1000)
+
+        💡 重要提示：优先使用 "1h", "2h", "24h" 等相对时间格式，
+           让系统自动计算时间戳。不要手动计算 Unix 时间戳！
+
+        # 只有查询特定日期范围时才使用 Unix 时间戳（如2025-03-19 00:00 到 23:59）
+        history_get(itemids="424943", history=0, time_from=1772284800, time_till=1772371199)
 
     Returns:
-        str: JSON formatted history data
+        str: JSON格式的历史数据，每条包含 clock（时间戳）、value（值）、ns（纳秒）
     """
     # Parse parameters
     itemids = parse_list_param(itemids)
     history = parse_int_param(history)
     limit = parse_int_param(limit, 10)
-    time_from = parse_int_param(time_from)
-    time_till = parse_int_param(time_till)
+    # 使用 parse_time_param 支持相对时间（如 "1h", "24h"）
+    from utils.params import parse_time_param
+    import time
+    time_from = parse_time_param(time_from, 0) if time_from else None
+    time_till = parse_time_param(time_till, 0) if time_till else None
+
+    # 时间戳合理性检查：如果 time_from 是过去超过7天的时间戳，提示使用相对时间
+    current_time = int(time.time())
+    if time_from and (current_time - time_from) > (7 * 24 * 3600):
+        return "错误：time_from 时间戳太老（超过7天前），可能是手动计算错误。\n" \
+               "请使用相对时间格式：time_from='2h'（最近2小时）、time_from='24h'（最近24小时）、time_from='7d'（最近7天）\n" \
+               "系统会自动计算正确的时间戳。"
 
     client = get_zabbix_client()
     params = {
