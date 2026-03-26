@@ -9,10 +9,19 @@ logger = logging.getLogger(__name__)
 
 
 def apiinfo_version() -> str:
-    """Get Zabbix API version information.
+    """获取 Zabbix API 版本信息。
+
+    用于确认 Zabbix 服务器版本和 API 兼容性，
+    在调试连接问题或确认 API 功能支持时特别有用。
 
     Returns:
-        str: JSON formatted API version info
+        JSON 格式的 API 版本信息，包含版本号字符串
+
+    使用场景：
+        - 场景1：确认 Zabbix 服务器版本
+          apiinfo_version()
+        - 场景2：调试连接问题时验证 API 可访问性
+          apiinfo_version()
     """
     client = get_zabbix_client()
     result = client.apiinfo.version()

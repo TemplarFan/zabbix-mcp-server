@@ -1,13 +1,43 @@
 """Query Tools - MCP tools for basic data queries."""
 import json
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from client import get_zabbix_client
-from utils.params import parse_int_param, parse_list_param, parse_dict_param
+from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param
 from utils.format import format_response
 
 logger = logging.getLogger(__name__)
+
+
+def _format_events_as_table(events: list) -> str:
+    """Format events list as markdown table for better display."""
+    if not events:
+        return "暂无事件数据"
+
+    lines = ["| 时间 | 主机 | 问题 | 级别 |", "|------|------|------|------|"]
+
+    severity_names = {"0": "未分类", "1": "信息", "2": "警告", "3": "一般", "4": "严重", "5": "灾难"}
+
+    for event in events:
+        clock = event.get("clock", 0)
+        try:
+            from datetime import datetime
+            time_str = datetime.fromtimestamp(int(clock)).strftime("%m-%d %H:%M")
+        except:
+            time_str = str(clock)
+
+        hosts = event.get("hosts", [{}])
+        host_name = hosts[0].get("name", "Unknown") if hosts else "Unknown"
+
+        name = event.get("name", "Unknown")
+        severity = str(event.get("severity", "0"))
+        sev_name = severity_names.get(severity, severity)
+
+        lines.append(f"| {time_str} | {host_name} | {name} | {sev_name} |")
+
+    return "\n".join(lines)
 
 
 def host_get(
@@ -20,14 +50,42 @@ def host_get(
     filter: Union[Dict[str, Any], str, None] = None,
     limit: Union[int, str, None] = 10
 ) -> str:
-    """获取主机信息。支持通过ID精确查询或通过名称模糊查询。
+    """获取主机信息列表。支持通过ID精确查询或通过名称模糊查询。
+
+    详细说明：查询 Zabbix 监控中的主机信息，支持多种查询方式：
+    - 通过 hostids 精确查询特定主机
+    - 通过 name 参数进行主机名模糊匹配（支持通配符）
+    - 通过 groupids 筛选特定主机组
+    - 通过 templateids 筛选使用特定模板的主机
+
+    与 get_host_by_ip 的区别：
+    - host_get：通用查询，支持多种条件组合
+    - get_host_by_ip：通过IP地址精确定位，更节省Token
 
     Args:
-        hostids: 主机ID列表。
-        name: 主机名关键词，支持模糊匹配（如输入"情报"可搜出"情报系统应用服务器"）。
-        groupids: 主机组ID过滤。
-        output: 返回字段，默认为核心字段。
-        limit: 最大返回数量，默认10条，防止数据过载。
+        hostids: 主机ID列表（可选，支持单个ID或逗号分隔的多个ID）
+        name: 主机名关键词（可选），支持模糊匹配
+              例如：输入"情报"可匹配"情报系统应用服务器"
+        groupids: 主机组ID列表（可选），用于筛选特定主机组
+        templateids: 模板ID列表（可选），用于筛选使用特定模板的主机
+        output: 返回字段列表（可选），默认为核心字段 ["hostid", "host", "name", "status", "available"]
+        search: 搜索条件字典（可选），如 {"name": "server"}
+        filter: 过滤条件字典（可选），如 {"status": "0"}
+        limit: 最大返回数量（可选，默认10条），防止数据过载
+
+    Returns:
+        JSON格式的主机信息列表，包含 hostid、host、name、status、available 等字段
+        如果结果达到限制数量，会提示"仅显示前 N 个匹配结果"
+
+    使用场景：
+        - 场景1：通过主机ID精确查询
+          host_get(hostids="12345")
+        - 场景2：通过名称模糊搜索
+          host_get(name="web")
+        - 场景3：查询特定主机组的主机
+          host_get(groupids="10", limit=50)
+        - 场景4：已知IP时（更推荐用 get_host_by_ip）
+          get_host_by_ip(ip="192.168.1.1")
     """
     client = get_zabbix_client()
 
@@ -69,7 +127,8 @@ def host_get(
         result = client.host.get(**params)
 
         if not result:
-            return f"未找到匹配项。搜索关键词: {name if name else '无'}"
+            search_info = name if name else (str(search) if search else '无')
+            return f"未找到匹配项。搜索关键词: {search_info}"
 
         if len(result) >= limit:
             hint = f"\n(注意：仅显示前 {limit} 个匹配结果，请提供更精确的名称以缩小范围)"
@@ -673,53 +732,89 @@ def event_get(
     limit: Union[int, str, None] = 10,
     output: Any = None
 ) -> str:
-    """获取事件列表（支持 selectHosts 关联主机信息）。
+    """获取事件列表。仅用于查询历史事件记录，不要用于查询当前问题。
 
-    重要提示：本函数不支持 'offset' 参数翻页，请使用 'time_till' 进行翻页。
+    重要区分（必看）：
+    - 查【当前未解决问题】→ 用 get_problem_summary（已格式化，直接展示）
+    - 查【历史事件/已恢复事件】→ 用 event_get
+
+    参数 value 的含义：
+    - value=1：问题发生（当前活跃的问题）
+    - value=0：问题已恢复（已解决的历史事件）
+
+    翻页机制说明（重要）：
+    当查询时间范围内的事件数量超过 limit 时，需要分批获取避免 Token 溢出。
+    由于 Zabbix 按时间倒序返回（最新的在前），翻页是向更早的时间推进：
+
+    1. 首次查询：指定 time_from（如"7d"）和 limit（如50）
+       → 返回最新的 50 条记录
+       → 查看返回结果开头的"翻页信息"注释
+
+    2. 判断继续：如果"是否还有更多"为"是"，继续翻页
+
+    3. 下一页查询：使用 time_from=第一次的绝对时间戳, time_till=最早记录时间戳-1
+       → 必须用绝对时间戳（如 1773660800），不能用相对时间（如"7d"）
+       → 因为相对时间每次都会重新计算，导致时间窗口不一致
+
+    翻页示例（查询过去一周的事件）：
+        第1次: event_get(hostids="12345", time_from="7d", limit=50)
+               → 返回最新的50条，翻页信息提示"还有更多"
+               → 记录 time_from 的绝对值: 1773660800
+               → 最早记录时间是 1774275680
+        第2次: event_get(hostids="12345", time_from=1773660800, time_till=1774275679, limit=50)
+               → 使用绝对时间戳翻页，返回更早的50条
+        第3次: event_get(hostids="12345", time_from=1773660800, time_till=新时间戳-1, limit=50)
+               → 继续用绝对时间戳翻页...
+
+    何时停止翻页（重要）：
+    - 当翻页信息中显示"是否还有更多: 否"时，**必须立即停止翻页**
+    - 当"返回数量 < limit"时，说明该时间范围内已获取全部数据，停止翻页
+    - 当"最早记录时间"已接近"查询范围"起点时，停止翻页
+
+    翻页结束后的处理：
+    - 停止调用 event_get
+    - 基于已获取的所有事件数据进行分析和总结
+    - 生成最终报告或回答用户问题
+
+    适用场景：
+    - 追溯某台主机昨天发生了什么事件
+    - 查看某个触发器的历史触发记录
+    - 统计某段时间内的事件数量
+
+    不适用场景（不要用 event_get）：
+    - 查当前有哪些未确认的告警 → 用 get_problem_summary()
+    - 查当前整体告警概况 → 用 get_problem_summary()
 
     Args:
-        eventids: 事件ID列表（可选）
-        groupids: 主机组ID列表（可选）
-        hostids: 主机ID（支持单个ID或逗号分隔的列表）
-        objectids: 对象ID（触发器ID等，可选）
-        source: 事件来源（0=触发器, 1=自动发现, 2=自动注册, 3=内部事件）
-        object_: 事件对象类型（0=触发器, 1=监控项, 2=LLD规则等）
-        value: 事件状态过滤（0=问题, 1=恢复）。注意：Zabbix 7.0 API不支持此参数作为输入，
-               会在返回结果后本地过滤
-        severities: 严重级别（0-5）列表或逗号分隔字符串
-        time_from: 起始时间（UNIX时间戳），用于时间范围过滤
-        time_till: 截止时间（UNIX时间戳），用于翻页（取上一页最后一条的clock）
-        limit: 返回事件数量上限（默认10条）
-        output: 返回字段列表
+        eventids: 事件ID列表（可选，精确查询特定事件）
+        groupids: 主机组ID列表（可选，查询特定主机组的事件）
+        hostids: 主机ID列表（可选，查询特定主机的事件）
+        objectids: 对象ID（可选，查询特定触发器的事件）
+        source: 事件来源（可选，0=触发器, 1=自动发现, 2=自动注册, 3=内部事件）
+        object_: 事件对象类型（可选，0=触发器, 1=监控项, 2=LLD规则）
+        value: 事件状态过滤（可选，0=问题, 1=恢复）
+        severities: 严重级别列表（可选，0-5）
+        time_from: 起始时间（可选，Unix时间戳或相对时间如"7d"）
+                   翻页时保持 time_from 不变，只调整 time_till 向更早时间推进
+        time_till: 截止时间（可选，Unix时间戳或相对时间，默认当前）
+                   翻页用法：将上次返回的"最早记录时间戳-1"作为新的 time_till
+        limit: 每页返回数量上限（可选，默认10条），建议 20-50 避免 Token 溢出
+        output: 返回字段列表（可选）
 
-    常用查询示例：
-        # 查当前告警（问题状态的事件）- 必须同时指定 source 和 object_
-        event_get(source=0, object_=0, value=0, limit=20)
+    Returns:
+        JSON格式的事件列表，包含 eventid、name、severity、clock、hosts 等字段
 
-        # 查所有事件（包括已恢复的）
-        event_get(source=0, object_=0, limit=20)
+    使用场景（仅用于历史追溯）：
+        - 场景1：查询某主机昨天发生了什么事件（已恢复的）
+          event_get(hostids="12345", value=0, time_from="24h", limit=20)
+        - 场景2：查询特定时间段内的事件
+          event_get(time_from="7d", limit=50)
+        - 场景3：查询特定触发器的历史触发记录
+          event_get(objectids="67890", limit=20)
 
-    翻页说明（重要）：
-        1. 第1页：获取最新事件
-           result = event_get(source=0, object_=0, value=0, limit=20)
-
-        2. 找到第1页结果中最旧那条的 clock 值（注意是10位数字，如 1773976329）
-           注意：必须完整复制，不要截断！
-
-        3. 第2页：用 time_till 参数传入上一步的 clock 值
-           event_get(source=0, object_=0, value=0, limit=20, time_till=1773976329)
-
-        4. 重复步骤 2-3 直到返回为空
-
-        ⚠️ 警告：time_till 必须是完整的10位时间戳，不要遗漏任何数字！
-
-        🛑 停止条件（满足任一即可停止翻页）：
-           - 返回结果为空（没有更多数据了）
-           - 已经获取了足够多的事件（如超过100条）
-           - 用户没有明确要求"查看更多"或"下一页"
-           - 当前展示的内容已经回答了用户的问题
-
-        💡 提示：默认情况下，只查1-2页就足够了，不要无限翻页！
+    错误用法（不要这样做）：
+        - 不要用 event_get 查当前问题 → 用 get_problem_summary()
+        - 不要传 value=0 查"当前问题" → value=0 表示已恢复
     """
     client = get_zabbix_client()
 
@@ -729,8 +824,9 @@ def event_get(
     hostids = parse_list_param(hostids)
     objectids = parse_list_param(objectids)
     limit = parse_int_param(limit) or 10
-    time_from = parse_int_param(time_from)
-    time_till = parse_int_param(time_till)
+    # 使用 parse_time_param 支持相对时间字符串（如 "24h", "7d"）
+    time_from = parse_time_param(time_from, None)
+    time_till = parse_time_param(time_till, None)
     source = parse_int_param(source)
     object_val = parse_int_param(object_)
     value_filter = parse_int_param(value)
@@ -785,6 +881,40 @@ def event_get(
         # Local filtering by value since Zabbix 7.0 API doesn't support 'value' as input param
         if value_filter is not None and result:
             result = [item for item in result if int(item.get("value", -1)) == value_filter]
+
+        # 添加翻页元数据，帮助 LLM 判断是否继续查询
+        if result and time_from:
+            # 获取结果中最小的时间戳（最早的记录）
+            min_clock = min(int(item.get("clock", 0)) for item in result)
+            time_from_val = time_from  # time_from 已经被 parse_time_param 解析为整数
+
+            # 判断是否还有更多数据：如果返回数量等于limit，说明可能有更多；否则没有更多
+            has_more = len(result) >= limit
+
+            # 在结果前添加翻页提示（作为注释，不影响 JSON 解析）
+            if has_more:
+                pagination_info = f"""/* 翻页信息（不要展示给用户）：
+- 本次返回: {len(result)} 条记录 (limit={limit})
+- 最早记录时间: {min_clock} ({datetime.fromtimestamp(min_clock).strftime('%Y-%m-%d %H:%M:%S')})
+- 查询范围: {time_from_val} ({datetime.fromtimestamp(time_from_val).strftime('%Y-%m-%d %H:%M:%S')}) 到 {time_till or '现在'}
+- 是否还有更多: 是
+- 如需继续翻页: 使用 time_from={time_from_val}, time_till={min_clock - 1} 查询下一页
+  （注意：翻页时必须用绝对时间戳，不能用相对时间如"24h"）
+*/
+
+"""
+            else:
+                pagination_info = f"""/* 翻页信息（不要展示给用户）：
+- 本次返回: {len(result)} 条记录 (limit={limit})
+- 最早记录时间: {min_clock} ({datetime.fromtimestamp(min_clock).strftime('%Y-%m-%d %H:%M:%S')})
+- 查询范围: {time_from_val} ({datetime.fromtimestamp(time_from_val).strftime('%Y-%m-%d %H:%M:%S')}) 到 {time_till or '现在'}
+- 是否还有更多: 否（返回数量少于limit，已获取全部数据）
+- 【重要】请停止翻页，直接基于已获取的 {len(result)} 条记录进行分析和总结
+*/
+
+"""
+            return pagination_info + format_response(result)
+
         return format_response(result)
     except Exception as e:
         return f"查询失败: {str(e)}"
@@ -801,41 +931,46 @@ def history_get(
 ) -> str:
     """获取监控项历史数据（原始采集值）。
 
-    用于查询监控项的历史数值，支持时间范围过滤。
-    如需聚合统计（每小时最大/最小/平均值），请使用 trend_get。
+    详细说明：返回监控项的原始历史数据，即每次采集的具体数值。
+
+    与 trend_get 的区别（重要）：
+    - history_get：返回原始采集数据，数据量大，适合查看具体时间点数值或精细分析
+    - trend_get：返回每小时聚合数据（最大/最小/平均值），数据量小，适合长期趋势分析
+
+    选择建议：
+    - 查看最近几小时的详细数据 → 使用 history_get
+    - 查看几天或几周的趋势 → 使用 trend_get
+    - 只需要统计摘要 → 使用 trend_summary
 
     Args:
-        itemids: 监控项ID（必须），可通过 item_get 查询获取
-        history: 数据类型（0=float浮点, 1=character字符, 2=log日志, 3=unsigned整数, 4=text文本）
-        time_from: 起始时间，支持：
+        itemids: 监控项ID（必选），可通过 item_get 查询获取
+        history: 数据类型（可选，默认0）
+                0=float浮点数, 1=character字符, 2=log日志,
+                3=unsigned无符号整数, 4=text文本
+        time_from: 起始时间（可选），支持两种格式：
+                   - 相对时间字符串："1h"=1小时前, "24h"=24小时前, "7d"=7天前
                    - Unix时间戳（如 1773990849）
-                   - 相对时间（如 "1h"=1小时前, "24h"=24小时前, "7d"=7天前）
-        time_till: 截止时间，支持格式同 time_from，不传默认为当前时间
-        limit: 返回条数限制（默认10）
-        sortfield: 排序字段（默认 "clock" 按时间）
-        sortorder: 排序方向（"ASC" 升序 或 "DESC" 降序，默认降序）
-
-    常用查询示例：
-        # 查询最近1小时的数据（推荐：使用相对时间字符串）
-        history_get(itemids="424943", history=0, time_from="1h", limit=100)
-
-        # 查询最近2小时的数据（推荐）
-        history_get(itemids="424943", history=0, time_from="2h", limit=100)
-
-        # 查询最近24小时的数据（推荐）
-        history_get(itemids="424943", history=0, time_from="24h", limit=100)
-
-        # 查询最近7天的数据（推荐）
-        history_get(itemids="424943", history=0, time_from="7d", limit=1000)
-
-        💡 重要提示：优先使用 "1h", "2h", "24h" 等相对时间格式，
-           让系统自动计算时间戳。不要手动计算 Unix 时间戳！
-
-        # 只有查询特定日期范围时才使用 Unix 时间戳（如2025-03-19 00:00 到 23:59）
-        history_get(itemids="424943", history=0, time_from=1772284800, time_till=1772371199)
+                   💡 强烈推荐使用相对时间字符串，系统自动计算
+        time_till: 截止时间（可选），格式同 time_from，不传默认为当前时间
+        limit: 返回条数限制（可选，默认10条）
+        sortfield: 排序字段（可选，默认 "clock" 按时间排序）
+        sortorder: 排序方向（可选，"ASC" 升序 或 "DESC" 降序，默认降序）
 
     Returns:
-        str: JSON格式的历史数据，每条包含 clock（时间戳）、value（值）、ns（纳秒）
+        JSON格式的历史数据列表，每条记录包含：
+        - clock: Unix时间戳（秒）
+        - value: 采集值
+        - ns: 纳秒部分（用于精确时间）
+
+    使用场景：
+        - 场景1：查询最近1小时的详细数据（推荐）
+          history_get(itemids="424943", history=0, time_from="1h", limit=100)
+        - 场景2：查询最近24小时的数据
+          history_get(itemids="424943", history=0, time_from="24h", limit=100)
+        - 场景3：查询最近7天的大量数据
+          history_get(itemids="424943", history=0, time_from="7d", limit=1000)
+        - 场景4：查询特定时间范围（只有这时才用时间戳）
+          history_get(itemids="424943", time_from=1772284800, time_till=1772371199)
     """
     # Parse parameters
     itemids = parse_list_param(itemids)

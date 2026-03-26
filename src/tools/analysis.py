@@ -18,16 +18,34 @@ def trend_get(
     time_till: Union[int, str, None] = None,
     limit: Union[int, str, None] = 24
 ) -> str:
-    """Get trend data from Zabbix.
+    """获取监控项趋势数据（每小时聚合数据）。
+
+    详细说明：返回监控项的历史趋势数据，包含每小时的最大值、最小值、平均值。
+    与 history_get 的区别：
+    - trend_get：返回聚合数据（每小时一条记录），数据量小，适合长期趋势分析
+    - history_get：返回原始采集数据，数据量大，适合查看具体数值
+
+    如需快速了解指标统计摘要，请使用 trend_summary（更省 Token）。
 
     Args:
-        itemids: List of item IDs to get trends for
-        time_from: Start time (Unix timestamp)
-        time_till: End time (Unix timestamp)
-        limit: Maximum number of results
+        itemids: 监控项ID列表（必选，可通过 item_get 查询获取）
+        time_from: 起始时间（Unix时间戳，可选）
+                   支持相对时间格式："1h"=1小时前, "24h"=24小时前, "7d"=7天前
+        time_till: 截止时间（Unix时间戳，可选，默认为当前时间）
+        limit: 最大返回条数（默认24条，即最近24小时）
 
     Returns:
-        str: JSON formatted trend data
+        JSON格式的趋势数据，每条包含：
+        - clock: 时间戳
+        - value_avg: 平均值
+        - value_max: 最大值
+        - value_min: 最小值
+
+    使用场景：
+        - 场景1：查看最近24小时的趋势数据
+          trend_get(itemids="12345", time_from="24h")
+        - 场景2：查看特定时间范围的趋势
+          trend_get(itemids="12345", time_from=1772284800, time_till=1772371199)
     """
     itemids = parse_list_param(itemids)
     limit = parse_int_param(limit, 24)
@@ -213,31 +231,64 @@ def trend_summary(
 
 def get_problem_summary(
     hostids: Optional[str] = None,
-    time_range: str = "24h",
+    time_range: str = "7d",
     group_by: str = "severity"
 ) -> str:
-    """获取告警摘要（已聚合），适合对话场景直接展示。
+    """获取当前未确认告警列表（与 Zabbix 仪表盘"未确认问题"视图一致）。
+
+    重要：这是查询【当前未解决问题】的唯一工具，返回结果已完整，**禁止再调用其他工具补充**。
+
+    功能说明：
+    - 查询当前未恢复且未确认的告警（与 Zabbix 仪表盘"未确认问题"视图完全一致）
+    - 返回 Markdown 格式的完整告警列表，包含统计和详情
+    - 已按严重程度分组排序，可直接展示给用户
+
+    **参数限制（重要）**：
+    - 本工具只接受 hostids（主机ID），不支持主机名搜索
+    - 如需查询特定主机，请先调用 host_get 或 get_host_by_ip 获取 hostid
+    - 如需一站式检查主机健康（支持主机名），请使用 check_host_health
+
+    **禁止行为（非常重要）**：
+    - 禁止再调用 event_get 补充查询
+    - 禁止再调用 problem.get 或类似 API
+    - 禁止添加总结性话语（如"以上是..."）
+    - 直接原样展示返回的 Markdown 内容
+
+    过滤条件：
+    - acknowledged=False：只返回未确认的问题
+    - suppressed=False：只返回未被抑制的问题
+    - time_from：根据 time_range 参数计算（默认7天）
+    - 主机状态=启用：只返回启用主机的问题
+
+    与 event_get 的区别：
+    - get_problem_summary：当前未解决问题 + 已格式化表格 → 直接展示
+    - event_get：历史事件（包括已恢复的），需要传时间参数 → 用于追溯
 
     Args:
-        hostids: 主机ID（可选，逗号分隔）
-        time_range: 时间范围，支持 "1h", "24h", "7d"
+        hostids: 主机ID（可选，不传则查询所有主机；逗号分隔多个主机）。**注意：只接受ID，不接受主机名**
+        time_range: 查询时间范围（默认"7d"），支持 "1h", "24h", "7d"
         group_by: 分组方式（默认按严重程度）
 
     Returns:
-        Markdown格式告警摘要
+        Markdown格式告警列表，已包含完整的统计和详情，**直接原样展示，不要总结**：
+
+        ## 告警概览 (24h)
+        **总计: X 个未确认告警**
+        [级别统计]
+        ---
+        ### [级别图标] [级别名称]
+        | 时间 | 主机 | 问题 |
+        | ... | ... | ... |
+
+    使用场景：
+        - 场景1：查看当前所有未确认的问题详情
+          get_problem_summary()
+          **返回内容直接展示，不要调用其他工具补充**
+        - 场景2：查看特定主机的未确认问题
+          get_problem_summary(hostids="12345")
+          **返回内容直接展示，不要调用其他工具补充**
     """
     client = get_zabbix_client()
-
-    # 解析时间
-    now = int(time.time())
-    if time_range == "1h":
-        time_from = now - 3600
-    elif time_range == "24h":
-        time_from = now - 86400
-    elif time_range == "7d":
-        time_from = now - 604800
-    else:
-        time_from = now - 86400
 
     # 解析hostids
     hostid_list = None
@@ -245,10 +296,20 @@ def get_problem_summary(
         hostid_list = [h.strip() for h in hostids.split(",") if h.strip()]
 
     try:
-        # 获取告警
+        # 使用 problem.get 获取当前问题（与仪表盘"未确认问题"视图一致）
+        # 注意：problem.get 不支持 selectHosts，需要额外查询
+        # acknowledged=false 只返回未确认的问题
+        # suppressed=false 只返回未被抑制的问题（仪表盘默认不显示被抑制的问题）
+        # time_from 根据 time_range 参数计算（默认7天）
+        import time
+        default_time_from = int(time.time()) - (7 * 24 * 3600)  # 默认7天前
+        time_from = parse_time_param(time_range, default_time_from)
+
         params = {
             "output": ["eventid", "name", "severity", "clock", "objectid"],
-            "time_from": time_from,
+            "acknowledged": False,  # 只返回未确认的问题
+            "suppressed": False,    # 只返回未被抑制的问题
+            "time_from": time_from, # 只查询最近7天的问题
             "sortfield": "eventid",
             "sortorder": "DESC",
             "limit": 100
@@ -259,9 +320,9 @@ def get_problem_summary(
         problems = client.problem.get(**params)
 
         if not problems:
-            return f"## 告警概览\n\n**{time_range} 内无活跃告警**"
+            return "## 告警概览\n\n**当前无活跃告警**"
 
-        # 统计
+        # 定义严重程度映射
         severity_names = {
             "0": "未分类", "1": "信息", "2": "警告",
             "3": "一般", "4": "严重", "5": "灾难"
@@ -271,47 +332,63 @@ def get_problem_summary(
             "3": "🟠", "4": "🔴", "5": "🚨"
         }
 
+        # 获取主机信息（通过 trigger.get），并过滤掉禁用主机的问题
+        trigger_ids = list(set([p.get("objectid") for p in problems if p.get("objectid")]))
+        host_map = {}
+        enabled_hostids = set()  # 记录启用的主机ID
+        if trigger_ids:
+            triggers = client.trigger.get(
+                triggerids=trigger_ids,
+                output=["triggerid"],
+                selectHosts=["hostid", "name", "status"]
+            )
+            for t in triggers:
+                if t.get("hosts"):
+                    host = t["hosts"][0]
+                    host_map[t["triggerid"]] = host.get("name", "Unknown")
+                    # 只保留启用状态（status=0）的主机
+                    if host.get("status") == "0":
+                        enabled_hostids.add(t["triggerid"])
+
+        # 过滤掉禁用主机的问题
+        problems = [p for p in problems if p.get("objectid") in enabled_hostids]
+
+        # 统计 severity
         stats = {}
         for p in problems:
             sev = str(p.get("severity", "0"))
             stats[sev] = stats.get(sev, 0) + 1
 
-        # 获取主机信息
-        trigger_ids = list(set([p.get("objectid") for p in problems if p.get("objectid")]))
-        host_map = {}
-        if trigger_ids:
-            triggers = client.trigger.get(
-                triggerids=trigger_ids,
-                output=["triggerid"],
-                selectHosts=["hostid", "name"]
-            )
-            for t in triggers:
-                if t.get("hosts"):
-                    host_map[t["triggerid"]] = t["hosts"][0].get("name", "Unknown")
-
         # 构建Markdown
         total = len(problems)
         result = f"## 告警概览 ({time_range})\n\n"
-        result += f"**总计: {total} 个告警**\n\n"
+        result += f"**总计: {total} 个未确认告警**\n\n"
 
         # 按级别统计
         for sev in ["5", "4", "3", "2", "1", "0"]:
             if sev in stats:
                 result += f"{severity_icons[sev]} {severity_names[sev]}: {stats[sev]}个\n"
 
-        # Top 5详情
-        result += "\n### 最严重的5个告警\n"
-        result += "| 时间 | 主机 | 问题 | 级别 |\n"
-        result += "|------|------|------|------|\n"
+        # 按严重程度分组显示详情
+        result += "\n---\n"
+        all_problems = sorted(problems, key=lambda x: int(x.get("severity", 0)), reverse=True)
 
-        top5 = sorted(problems, key=lambda x: int(x.get("severity", 0)), reverse=True)[:5]
-        for p in top5:
+        current_sev = None
+        for p in all_problems:
+            sev = str(p.get("severity", "0"))
+
+            # 当 severity 变化时，输出分类标题
+            if sev != current_sev:
+                current_sev = sev
+                result += f"\n### {severity_icons[sev]} {severity_names[sev]}级别 ({stats[sev]}个)\n\n"
+                result += "| 时间 | 主机 | 问题 |\n"
+                result += "|------|------|------|\n"
+
             clock = int(p.get("clock", 0))
             time_str = datetime.fromtimestamp(clock).strftime("%m-%d %H:%M")
-            host = host_map.get(p.get("objectid", ""), "Unknown")[:15]
-            name = p.get("name", "Unknown")[:25]
-            sev = str(p.get("severity", "0"))
-            result += f"| {time_str} | {host} | {name} | {severity_icons[sev]} |\n"
+            host = host_map.get(p.get("objectid", ""), "Unknown")
+            name = p.get("name", "Unknown")
+            result += f"| {time_str} | {host} | {name} |\n"
 
         return result
 
@@ -709,14 +786,33 @@ def check_host_health(
 
 
 def quick_status(include_disabled: bool = True, include_offline: bool = True) -> str:
-    """快速查看Zabbix整体状态 - 适合每日巡检。
+    """快速查看 Zabbix 整体状态 - 适合每日巡检和全局概览。
+
+    详细说明：汇总展示 Zabbix 监控系统的整体健康状况，包括：
+    - 主机统计（总数、启用/停用、在线/离线/未知状态）
+    - 主机可用率计算
+    - 停用主机列表
+    - 离线主机列表（带IP地址）
+    - 24小时告警分级统计
+
+    这是获取全局视图的首选工具，特别适合每日巡检场景。
 
     Args:
-        include_disabled: 是否列出禁用主机列表
-        include_offline: 是否列出离线主机列表
+        include_disabled: 是否在报告中列出停用主机列表（可选，默认True）
+                          设为False可节省Token，当主机数量很多时建议关闭
+        include_offline: 是否在报告中列出离线主机列表（可选，默认True）
+                         设为False可节省Token
 
     Returns:
-        Markdown格式状态摘要
+        Markdown格式的状态摘要，包含主机统计、告警统计和异常主机列表
+
+    使用场景：
+        - 场景1：每日巡检查看整体状态（默认）
+          quick_status()
+        - 场景2：仅查看统计信息，不包含详细列表（节省Token）
+          quick_status(include_disabled=False, include_offline=False)
+        - 场景3：重点关注异常主机
+          quick_status(include_disabled=True, include_offline=True)
     """
     client = get_zabbix_client()
 
