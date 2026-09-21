@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "zabbix-mcp-http": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp"
+    },
+    "zabbix-mcp-windows": {
+      "command": "cmd",
+      "args": [
+        "/c", "uv", "run", "--directory", "D:/path/to/zabbix-mcp-server",
+        "python", "-m", "src.main"
+      ],
+      "env": {
+        "ZABBIX_URL": "https://zabbix.example.com",
+        "ZABBIX_TOKEN": "<your_api_token>",
+        "READ_ONLY": "true"
+      }
+    },
+    "zabbix-mcp-linux": {
+      "command": "uv",
+      "args": [
+        "run", "--directory", "/path/to/zabbix-mcp-server",
+        "python", "-m", "src.main"
+      ],
+      "env": {
+        "ZABBIX_URL": "https://zabbix.example.com",
+        "ZABBIX_TOKEN": "<your_api_token>",
+        "READ_ONLY": "true"
+      }
+    }
+  }
+}

@@ -1,0 +1,50 @@
+[project]
+name = "zabbix-mcp-server"
+version = "1.1.0"
+description = "A comprehensive MCP server for Zabbix integration"
+readme = "README.md"
+license = {text = "GPL-3.0"}
+authors = [
+    {name = "TemplarFan"}
+]
+keywords = ["zabbix", "mcp", "monitoring", "api", "server"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+"fastmcp>=2.12.4",
+"zabbix_utils>=2.0.3",
+"python-dotenv>=1.1.1",
+"requests>=2.31.0"
+]
+requires-python = ">=3.10"
+
+[project.urls]
+Homepage = "https://github.com/TemplarFan/zabbix-mcp-server"
+Repository = "https://github.com/TemplarFan/zabbix-mcp-server"
+Issues = "https://github.com/TemplarFan/zabbix-mcp-server/issues"
+Documentation = "https://github.com/TemplarFan/zabbix-mcp-server#readme"
+
+[project.scripts]
+zabbix-mcp = "main:main"
+zabbix-mcp-server = "main:main"
+
+[tool.setuptools]
+py-modules = ["client", "config", "main"]
+packages = ["tools", "utils", "reporting", "services"]
+package-dir = {"" = "src"}
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
