@@ -105,13 +105,21 @@ def main():
     transport = os.getenv("ZABBIX_MCP_TRANSPORT", "stdio")
     host = os.getenv("ZABBIX_MCP_HOST", "127.0.0.1")
     port = int(os.getenv("ZABBIX_MCP_PORT", "8000"))
+    stateless = os.getenv("ZABBIX_MCP_STATELESS_HTTP", "false").lower() in ("true", "1", "yes")
 
-    logger.info(f"Starting Zabbix MCP Server with transport: {transport}")
+    logger.info(
+        f"Starting Zabbix MCP Server with transport: {transport}, stateless: {stateless}"
+    )
 
     if transport == "stdio":
         mcp.run(transport="stdio")
     elif transport == "streamable-http":
-        mcp.run(transport="streamable-http", host=host, port=port)
+        mcp.run(
+            transport="streamable-http",
+            host=host,
+            port=port,
+            stateless_http=stateless,
+        )
     else:
         logger.error(f"Unknown transport: {transport}")
         sys.exit(1)
