@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from .event_paginator import fetch_all_eventid_pages
+
 
 PROBLEM_PAGE_SIZE = 1000
 API_BATCH_SIZE = 200
@@ -121,56 +123,25 @@ def _fetch_current_problems(
     time_from: Optional[int],
     page_size: int,
 ) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    seen: set[str] = set()
-    eventid_till: Optional[str] = None
+    base_params: Dict[str, Any] = {
+        "source": 0,
+        "object": 0,
+        "recent": False,
+        "output": [
+            "eventid", "r_eventid", "name", "severity", "clock", "objectid",
+            "acknowledged", "suppressed", "userid",
+        ],
+        "selectAcknowledges": [
+            "acknowledgeid", "userid", "clock", "action", "message", "suppress_until",
+        ],
+        "selectSuppressionData": ["maintenanceid", "userid", "suppress_until"],
+    }
+    if hostids:
+        base_params["hostids"] = list(hostids)
+    if time_from is not None:
+        base_params["time_from"] = time_from
 
-    while True:
-        params: Dict[str, Any] = {
-            "source": 0,
-            "object": 0,
-            "recent": False,
-            "output": [
-                "eventid", "r_eventid", "name", "severity", "clock", "objectid",
-                "acknowledged", "suppressed", "userid",
-            ],
-            "selectAcknowledges": [
-                "acknowledgeid", "userid", "clock", "action", "message", "suppress_until",
-            ],
-            "selectSuppressionData": ["maintenanceid", "userid", "suppress_until"],
-            "sortfield": "eventid",
-            "sortorder": "DESC",
-            "limit": page_size,
-        }
-        if hostids:
-            params["hostids"] = list(hostids)
-        if time_from is not None:
-            params["time_from"] = time_from
-        if eventid_till is not None:
-            params["eventid_till"] = eventid_till
-
-        page = client.problem.get(**params)
-        if not page:
-            break
-
-        page_ids: List[int] = []
-        for row in page:
-            row_eventid = _eventid(row)
-            if not row_eventid.isdigit():
-                raise RuntimeError("problem.get 返回了无效的 eventid")
-            page_ids.append(int(row_eventid))
-            if row_eventid not in seen:
-                seen.add(row_eventid)
-                rows.append(row)
-
-        if len(page) < page_size:
-            break
-        next_cursor = min(page_ids) - 1
-        if next_cursor < 0 or (eventid_till is not None and next_cursor >= int(eventid_till)):
-            raise RuntimeError("problem.get 分页游标未前进")
-        eventid_till = str(next_cursor)
-
-    return rows
+    return fetch_all_eventid_pages(client.problem, base_params, page_size, api_label="problem.get")
 
 
 def _fetch_triggers(client: Any, triggerids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
