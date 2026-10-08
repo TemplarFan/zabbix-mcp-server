@@ -18,6 +18,7 @@ from config import (
 )
 from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param
 from utils.format import format_response, format_table, format_duration
+from services.event_paginator import fetch_all_eventid_pages
 from services.problem_status import (
     AttentionStatus,
     DispositionStatus,
@@ -1076,46 +1077,7 @@ def _fetch_eventid_pages(
     page_size: int = QUICK_STATUS_PAGE_SIZE,
 ) -> List[Dict[str, Any]]:
     """按 eventid 游标获取完整结果，避免固定 limit 截断统计。"""
-    if page_size <= 0:
-        raise ValueError("page_size must be positive")
-
-    rows: List[Dict[str, Any]] = []
-    seen: set[str] = set()
-    eventid_till: Optional[str] = None
-
-    while True:
-        params = {
-            **base_params,
-            "sortfield": "eventid",
-            "sortorder": "DESC",
-            "limit": page_size,
-        }
-        if eventid_till is not None:
-            params["eventid_till"] = eventid_till
-
-        page = endpoint.get(**params)
-        if not page:
-            break
-
-        page_ids: List[int] = []
-        for row in page:
-            eventid = str(row.get("eventid", ""))
-            if not eventid.isdigit():
-                raise RuntimeError("Zabbix API returned an invalid eventid")
-            page_ids.append(int(eventid))
-            if eventid not in seen:
-                seen.add(eventid)
-                rows.append(row)
-
-        if len(page) < page_size:
-            break
-
-        next_cursor = min(page_ids) - 1
-        if next_cursor < 0 or (eventid_till is not None and next_cursor >= int(eventid_till)):
-            raise RuntimeError("Zabbix API pagination cursor did not advance")
-        eventid_till = str(next_cursor)
-
-    return rows
+    return fetch_all_eventid_pages(endpoint, base_params, page_size)
 
 
 def _append_severity_summary(
