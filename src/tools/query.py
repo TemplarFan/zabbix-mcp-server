@@ -7,6 +7,7 @@ from typing import Annotated, Any, Dict, List, Optional, Union
 from pydantic import Field
 
 from client import get_zabbix_client
+from services.event_paginator import iter_eventid_pages
 from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param
 from utils.format import format_response
 
@@ -797,54 +798,23 @@ def event_get(
 
     client = get_zabbix_client()
     returned_rows: List[Dict[str, Any]] = []
-    seen: set[str] = set()
     scanned = 0
     has_more = False
     next_cursor: Optional[str] = None
+    if cursor is not None:
+        base_params["eventid_till"] = cursor
 
     try:
-        while len(returned_rows) < parsed_limit:
-            params = {**base_params, "limit": EVENT_QUERY_PAGE_SIZE}
-            if cursor is not None:
-                params["eventid_till"] = cursor
-            page = client.event.get(**params)
-            if not page:
+        for paged in iter_eventid_pages(client.event, base_params, EVENT_QUERY_PAGE_SIZE):
+            item = paged.row
+            scanned += 1
+            if value_filter is None or parse_int_param(item.get("value"), -1) == value_filter:
+                returned_rows.append(item)
+            if len(returned_rows) >= parsed_limit:
+                has_more = paged.has_more_after
+                if has_more:
+                    next_cursor = str(int(item["eventid"]) - 1)
                 break
-
-            page_ids: List[int] = []
-            stopped_early = False
-            for index, item in enumerate(page):
-                item_eventid = str(item.get("eventid", ""))
-                if not item_eventid.isdigit():
-                    raise RuntimeError("Zabbix API 返回了无效的 eventid")
-                numeric_eventid = int(item_eventid)
-                if numeric_eventid <= 0:
-                    raise RuntimeError("Zabbix API 返回了无效的 eventid")
-                page_ids.append(numeric_eventid)
-                if item_eventid in seen:
-                    continue
-                seen.add(item_eventid)
-                scanned += 1
-
-                if value_filter is None or parse_int_param(item.get("value"), -1) == value_filter:
-                    returned_rows.append(item)
-                if len(returned_rows) >= parsed_limit:
-                    has_more = index < len(page) - 1 or len(page) >= EVENT_QUERY_PAGE_SIZE
-                    if has_more and numeric_eventid > 0:
-                        next_cursor = str(numeric_eventid - 1)
-                    stopped_early = True
-                    break
-
-            if stopped_early:
-                break
-            if len(page) < EVENT_QUERY_PAGE_SIZE:
-                break
-            if not page_ids:
-                raise RuntimeError("Zabbix API 分页页缺少有效 eventid")
-            new_cursor = min(page_ids) - 1
-            if new_cursor < 0 or (cursor is not None and new_cursor >= int(cursor)):
-                raise RuntimeError("Zabbix API 分页游标未前进")
-            cursor = str(new_cursor)
     except Exception as exc:
         return f"查询失败: {exc}"
 
