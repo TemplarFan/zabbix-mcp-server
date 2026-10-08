@@ -41,7 +41,6 @@ PROBLEM_VIEW_LABELS = {
     "current": "当前仍在触发",
     "actionable": "当前需处理",
     "handled_active": "已处置但仍在触发",
-    "indeterminate": "不可判定",
 }
 
 PROBLEM_REASON_LABELS = {
@@ -432,7 +431,6 @@ def _render_problem_summary(
     actionable = summary.by_status(AttentionStatus.ACTIONABLE)
     handled = summary.by_status(AttentionStatus.HANDLED_ACTIVE)
     ended = summary.by_status(AttentionStatus.ENDED)
-    indeterminate = summary.by_status(AttentionStatus.INDETERMINATE)
     if time_range is None:
         range_text = "全部"
     elif str(time_range).strip().isdigit():
@@ -447,7 +445,6 @@ def _render_problem_summary(
         f"  - 当前需处理: {len(actionable)}",
         f"  - 已处置但仍在触发: {len(handled)}",
         f"- 已结束: {len(ended)}",
-        f"- 不可判定（已排除）: {len(indeterminate)}",
         "",
         "### 独立事实统计",
         "",
@@ -466,7 +463,7 @@ def _render_problem_summary(
     elif view == "handled_active":
         sections = [("已处置但仍在触发", handled)]
     else:
-        sections = [("不可判定", indeterminate)]
+        sections = []
 
     for title, facts in sections:
         lines.extend([f"## {title} ({len(facts)}个)", ""])
@@ -476,17 +473,6 @@ def _render_problem_summary(
             lines.extend(["无。", ""])
             continue
         lines.extend(_problem_detail_table(facts, group_by))
-
-    if view != "indeterminate" and indeterminate:
-        lines.append(f"> 另有 {len(indeterminate)} 个不可判定问题已从当前问题统计中排除；可使用 view=indeterminate 查看。")
-    if view == "indeterminate" and indeterminate:
-        reason_counts: Dict[str, int] = {}
-        for fact in indeterminate:
-            reason = fact.indeterminate_reason or "unknown"
-            reason_counts[reason] = reason_counts.get(reason, 0) + 1
-        lines.extend(["## 排除原因", ""])
-        for reason, count in sorted(reason_counts.items(), key=lambda item: item[0].value):
-            lines.append(f"- {PROBLEM_REASON_LABELS.get(reason, reason)}: {count}")
 
     return "\n".join(lines).rstrip()
 
@@ -513,13 +499,13 @@ def get_problem_summary(
     hostids: Annotated[Union[str, int, None], Field(description="主机ID（不支持主机名，需先查host_get）")] = None,
     time_range: Annotated[Optional[str], Field(description="可选时间范围；不传时查询全部原始当前问题，传入7d/24h等时只筛选开始时间")] = None,
     group_by: Annotated[str, Field(description="明细分组方式：severity或host")] = "severity",
-    view: Annotated[str, Field(description="查询视图：current当前仍在触发分组、actionable当前需处理、handled_active已处置但仍触发、indeterminate不可判定")] = "current",
+    view: Annotated[str, Field(description="查询视图：current当前仍在触发分组、actionable当前需处理、handled_active已处置但仍触发")] = "current",
 ) -> str:
     """查询统一分类后的当前问题摘要。历史事件用event_get"""
     if group_by not in {"severity", "host"}:
         return "获取问题摘要失败: group_by 仅支持 severity 或 host"
     if view not in PROBLEM_VIEW_LABELS:
-        return "获取问题摘要失败: view 仅支持 current、actionable、handled_active 或 indeterminate"
+        return "获取问题摘要失败: view 仅支持 current、actionable 或 handled_active"
 
     hostid_list = parse_list_param(hostids) if hostids is not None else None
     analysis_clock = int(time.time())
@@ -822,7 +808,6 @@ def check_host_health(
 
     actionable = problem_summary.by_status(AttentionStatus.ACTIONABLE)
     handled = problem_summary.by_status(AttentionStatus.HANDLED_ACTIVE)
-    indeterminate = problem_summary.by_status(AttentionStatus.INDETERMINATE)
     host_status_label = "启用" if str(host_info.get("status", "1")) == "0" else "停用"
 
     result = f"## 主机健康: {host_name}\n\n"
@@ -833,8 +818,7 @@ def check_host_health(
     result += "### 当前问题分类\n"
     result += f"- Zabbix 原始当前问题: {problem_summary.raw_count}\n"
     result += f"- 当前需处理: {len(actionable)}\n"
-    result += f"- 已处置但仍在触发: {len(handled)}\n"
-    result += f"- 不可判定（已排除）: {len(indeterminate)}\n\n"
+    result += f"- 已处置但仍在触发: {len(handled)}\n\n"
 
     severity_icons = {"5": "🚨", "4": "🔴", "3": "🟠", "2": "🟡", "1": "🔵", "0": "⚪"}
     if actionable:
@@ -1246,7 +1230,6 @@ def quick_status(
         actionable = current_summary.by_status(AttentionStatus.ACTIONABLE)
         handled = current_summary.by_status(AttentionStatus.HANDLED_ACTIVE)
         ended = current_summary.by_status(AttentionStatus.ENDED)
-        indeterminate = current_summary.by_status(AttentionStatus.INDETERMINATE)
         recent_events = _fetch_eventid_pages(
             client.event,
             {
@@ -1303,7 +1286,7 @@ def quick_status(
         result += f"- 已处置但仍在触发: {len(handled)}\n"
         if ended:
             result += f"- 已结束: {len(ended)}\n"
-        result += f"- 不可判定（已排除）: {len(indeterminate)}\n\n"
+        result += "\n"
 
         result = _append_severity_summary(
             result,
