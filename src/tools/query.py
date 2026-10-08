@@ -806,14 +806,13 @@ def event_get(
 
     try:
         for paged in iter_eventid_pages(client.event, base_params, EVENT_QUERY_PAGE_SIZE):
-            item = paged.row
             scanned += 1
-            if value_filter is None or parse_int_param(item.get("value"), -1) == value_filter:
-                returned_rows.append(item)
+            if value_filter is None or parse_int_param(paged.row.get("value"), -1) == value_filter:
+                returned_rows.append(paged.row)
             if len(returned_rows) >= parsed_limit:
                 has_more = paged.has_more_after
                 if has_more:
-                    next_cursor = str(int(item["eventid"]) - 1)
+                    next_cursor = paged.next_cursor()
                 break
     except Exception as exc:
         return f"查询失败: {exc}"
