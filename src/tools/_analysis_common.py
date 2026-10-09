@@ -16,6 +16,9 @@ from services.problem_status import (
 
 BEIJING_TZ = timezone(timedelta(hours=8))
 
+# 问题摘要明细每组默认展示条数（只限明细，统计总数不受影响）
+PROBLEM_SUMMARY_TOP_N = 20
+
 SEVERITY_NAMES: Dict[str, str] = {
     "5": "灾难", "4": "严重", "3": "一般", "2": "警告", "1": "信息", "0": "未分类",
 }
