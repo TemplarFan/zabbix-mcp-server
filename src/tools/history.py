@@ -9,8 +9,6 @@ from client import get_zabbix_client
 from config import BEFORE_WINDOW_HOURS, DEFAULT_QUERY_DAYS
 from services.event_paginator import fetch_all_eventid_pages
 from services.problem_status import (
-    DispositionStatus,
-    LifecycleStatus,
     ProblemFact,
     analyze_problem_events,
 )
@@ -19,10 +17,8 @@ from ._analysis_common import (
     DISPOSITION_STATUS_LABELS,
     LIFECYCLE_STATUS_LABELS,
     PROBLEM_REASON_LABELS,
+    QUICK_STATUS_PAGE_SIZE,
 )
-
-
-QUICK_STATUS_PAGE_SIZE = 1000
 
 
 def _fetch_eventid_pages(

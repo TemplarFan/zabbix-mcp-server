@@ -1,14 +1,11 @@
 """主机健康巡检与整体状态工具：接口可用性、统一问题分类与关键指标。"""
 import re
 import time
-from datetime import datetime
-from typing import Annotated, Any, Dict, List, Optional, Union
+from typing import Annotated, Any, Dict, List, Optional
 
 from pydantic import Field
 
 from client import get_zabbix_client
-from utils.params import parse_int_param, parse_list_param
-from utils.format import format_table, format_duration
 from services.event_paginator import fetch_all_eventid_pages
 from services.problem_status import (
     AttentionStatus,
@@ -17,16 +14,13 @@ from services.problem_status import (
 )
 from .problem import _parse_problem_time_range
 from ._analysis_common import (
-    BEIJING_TZ,
     SEVERITY_NAMES,
     SEVERITY_ICONS,
     SEVERITY_ORDER,
     DISPOSITION_STATUS_LABELS,
-    PROBLEM_SUMMARY_TOP_N,
+    QUICK_STATUS_PAGE_SIZE,
 )
 
-
-QUICK_STATUS_PAGE_SIZE = 1000
 
 
 def _resolve_health_host(client: Any, identifier: str) -> Optional[Dict[str, Any]]:
