@@ -614,9 +614,9 @@ def quick_status(
             )
         }
         result += "#### 已处置但仍在触发的处置类型\n"
-        result += f"- 已确认: {handled_by_disposition[DispositionStatus.ACKNOWLEDGED]}\n"
-        result += f"- 已人工抑制: {handled_by_disposition[DispositionStatus.SUPPRESSED]}\n"
-        result += f"- 已确认且已人工抑制: {handled_by_disposition[DispositionStatus.ACKNOWLEDGED_AND_SUPPRESSED]}\n\n"
+        result += f"- {DISPOSITION_STATUS_LABELS[DispositionStatus.ACKNOWLEDGED]}: {handled_by_disposition[DispositionStatus.ACKNOWLEDGED]}\n"
+        result += f"- {DISPOSITION_STATUS_LABELS[DispositionStatus.SUPPRESSED]}: {handled_by_disposition[DispositionStatus.SUPPRESSED]}\n"
+        result += f"- {DISPOSITION_STATUS_LABELS[DispositionStatus.ACKNOWLEDGED_AND_SUPPRESSED]}: {handled_by_disposition[DispositionStatus.ACKNOWLEDGED_AND_SUPPRESSED]}\n\n"
         result += "> 上述问题已有人工处置，但技术状态仍在触发，不代表真实恢复。\n\n"
 
         # 7. 最近二十四小时事件统计

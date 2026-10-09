@@ -27,28 +27,26 @@ from ._analysis_common import (
     ATTENTION_STATUS_LABELS,
     DISPOSITION_STATUS_LABELS,
     LIFECYCLE_STATUS_LABELS,
+    SEVERITY_NAMES,
+    SEVERITY_ORDER,
 )
 
 
 def _problem_detail_table(facts: List[ProblemFact], group_by: str) -> List[str]:
-    severity_names = {
-        "0": "未分类", "1": "信息", "2": "警告",
-        "3": "一般", "4": "严重", "5": "灾难",
-    }
     if group_by == "host":
         group_key = lambda fact: fact.host_name
         ordered_keys = sorted({group_key(fact) for fact in facts})
     else:
         group_key = lambda fact: fact.severity
         ordered_keys = [
-            severity for severity in ["5", "4", "3", "2", "1", "0"]
+            severity for severity in SEVERITY_ORDER
             if any(group_key(fact) == severity for fact in facts)
         ]
 
     lines: List[str] = []
     for key in ordered_keys:
         grouped = [fact for fact in facts if group_key(fact) == key]
-        label = key if group_by == "host" else severity_names.get(key, key)
+        label = key if group_by == "host" else SEVERITY_NAMES.get(key, key)
         lines.extend([
             f"### {label} ({len(grouped)}个)",
             "",

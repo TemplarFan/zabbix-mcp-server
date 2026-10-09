@@ -50,6 +50,10 @@ def iter_eventid_pages(
     """
     if page_size <= 0:
         raise ValueError("page_size must be positive")
+    if initial_eventid_till is not None and (
+        not initial_eventid_till.isdigit() or int(initial_eventid_till) < 0
+    ):
+        raise ValueError("initial_eventid_till must be a non-negative integer string")
     return _iterate(endpoint, base_params, page_size, api_label, initial_eventid_till)
 
 
