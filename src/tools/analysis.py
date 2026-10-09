@@ -1075,9 +1075,10 @@ def _fetch_eventid_pages(
     endpoint: Any,
     base_params: Dict[str, Any],
     page_size: int = QUICK_STATUS_PAGE_SIZE,
+    api_label: str = "event.get",
 ) -> List[Dict[str, Any]]:
     """按 eventid 游标获取完整结果，避免固定 limit 截断统计。"""
-    return fetch_all_eventid_pages(endpoint, base_params, page_size)
+    return fetch_all_eventid_pages(endpoint, base_params, page_size, api_label)
 
 
 def _append_severity_summary(

@@ -801,11 +801,11 @@ def event_get(
     scanned = 0
     has_more = False
     next_cursor: Optional[str] = None
-    if cursor is not None:
-        base_params["eventid_till"] = cursor
 
     try:
-        for paged in iter_eventid_pages(client.event, base_params, EVENT_QUERY_PAGE_SIZE):
+        for paged in iter_eventid_pages(
+            client.event, base_params, EVENT_QUERY_PAGE_SIZE, initial_eventid_till=cursor,
+        ):
             scanned += 1
             if value_filter is None or parse_int_param(paged.row.get("value"), -1) == value_filter:
                 returned_rows.append(paged.row)

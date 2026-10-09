@@ -12,9 +12,9 @@ from typing import Any, Dict, Iterator, List, NamedTuple, Optional
 class PagedRow(NamedTuple):
     """逐行模式的一行产出。
 
-    eventid 是已校验的正整数；has_more_after 表示该行之后当前批次是否
-    还有数据：页中恒为 True，短页最后一行为 False——调用方据此区分
-    "提前停止（还有更多）"与"数据自然耗尽"。续页游标用 next_cursor()。
+    eventid 是已校验的正整数；has_more_after 表示扫描批次在该行之后
+    是否还有候选行（可能来自下一页）：页中恒为 True，短页最后一行为
+    False——False 即整个候选范围确认扫描完成。续页游标用 next_cursor()。
     """
 
     row: Dict[str, Any]
@@ -38,16 +38,19 @@ def iter_eventid_pages(
     base_params: Dict[str, Any],
     page_size: int,
     api_label: str = "event.get",
+    initial_eventid_till: Optional[str] = None,
 ) -> Iterator[PagedRow]:
     """按 eventid DESC 游标逐页拉取，跨页去重后逐行产出 PagedRow。
 
     base_params 中的 sortfield/sortorder/limit 会被强制覆盖为
-    eventid/DESC/page_size。调用方提前停止即为合法用法，续页游标取
-    最后产出行的 eventid - 1；生成器自然耗尽表示候选范围扫描完成。
+    eventid/DESC/page_size。initial_eventid_till 是调用方持有的续页
+    游标，会注入首次请求并参与首页的游标前进校验。调用方提前停止即为
+    合法用法，续页游标取最后产出行的 next_cursor()；生成器自然耗尽
+    表示候选范围扫描完成。
     """
     if page_size <= 0:
         raise ValueError("page_size must be positive")
-    return _iterate(endpoint, base_params, page_size, api_label)
+    return _iterate(endpoint, base_params, page_size, api_label, initial_eventid_till)
 
 
 def _iterate(
@@ -55,9 +58,10 @@ def _iterate(
     base_params: Dict[str, Any],
     page_size: int,
     api_label: str,
+    initial_eventid_till: Optional[str],
 ) -> Iterator[PagedRow]:
     seen: set[str] = set()
-    eventid_till: Optional[str] = None
+    eventid_till = initial_eventid_till
     while True:
         params = {
             **base_params,
@@ -96,6 +100,12 @@ def fetch_all_eventid_pages(
     base_params: Dict[str, Any],
     page_size: int,
     api_label: str = "event.get",
+    initial_eventid_till: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """翻页拉取全部结果（跨页去重），用于必须覆盖全量数据的统计。"""
-    return [paged.row for paged in iter_eventid_pages(endpoint, base_params, page_size, api_label)]
+    return [
+        paged.row
+        for paged in iter_eventid_pages(
+            endpoint, base_params, page_size, api_label, initial_eventid_till,
+        )
+    ]
