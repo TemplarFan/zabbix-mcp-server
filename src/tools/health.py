@@ -182,7 +182,7 @@ def check_host_health(
         grouped = select_key_metrics(items, max_disks=10)
         key_items = [
             entry.item
-            for category in ("cpu", "memory", "disk", "disk_io", "network")
+            for category in ("cpu", "memory", "disk", "network")
             for entry in grouped.get(category, [])
         ]
 

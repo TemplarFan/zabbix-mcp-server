@@ -197,8 +197,13 @@ def select_key_metrics(
     scored.sort(key=lambda entry: entry.score, reverse=True)
 
     grouped: Dict[str, List[ScoredItem]] = {}
+    seen_itemids = set()
     seen_drives = set()
     for entry in scored:
+        itemid = str(entry.item.get("itemid", ""))
+        # 同一指标可能命中多个类别（如 ipmi.sensor 同属 cpu/memory），全结果只保留其最高分归类
+        if itemid in seen_itemids:
+            continue
         if entry.category == "disk":
             token = _drive_token(str(entry.item.get("key_", "")).lower())
             if token in seen_drives:
@@ -206,16 +211,19 @@ def select_key_metrics(
             if len(grouped.get("disk", [])) >= max_disks:
                 continue
             seen_drives.add(token)
-            grouped.setdefault("disk", []).append(entry)
         else:
-            if entry.category not in grouped:
-                grouped[entry.category] = [entry]
+            if entry.category in grouped:
+                continue
+        seen_itemids.add(itemid)
+        grouped.setdefault(entry.category, []).append(entry)
 
     if "disk" in grouped:
-        grouped["disk"].sort(
-            key=lambda entry: float(entry.item["lastvalue"] or 0)
-            if str(entry.item.get("lastvalue", "")).replace(".", "", 1).replace("-", "", 1).isdigit()
-            else 0,
-            reverse=True,
-        )
+        grouped["disk"].sort(key=_lastvalue_or_zero, reverse=True)
     return grouped
+
+
+def _lastvalue_or_zero(entry: ScoredItem) -> float:
+    try:
+        return float(entry.item.get("lastvalue") or 0)
+    except (TypeError, ValueError):
+        return 0.0
