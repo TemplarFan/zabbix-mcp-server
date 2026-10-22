@@ -63,19 +63,12 @@ class TrendSummaryErrorResponse(BaseModel):
     itemids: List[str] = Field(description="请求的监控项ID列表")
 
 
-def trend_get(
-    itemids: Annotated[Union[List[Any], str, int], Field(description="监控项ID（必填）")],
-    time_from: Annotated[Union[int, str, None], Field(description="起始时间（支持相对时间如7d）")] = None,
-    time_till: Annotated[Union[int, str, None], Field(description="截止时间")] = None,
-    limit: Annotated[Union[int, str, None], Field(description="返回条数（默认24）")] = 24
-) -> str:
-    """获取监控项趋势数据（每小时聚合）。摘要用trend_summary"""
+def _trend_get_impl(client, itemids, time_from, time_till, limit):
     itemids = parse_list_param(itemids)
     limit = parse_int_param(limit, 24)
     time_from = parse_int_param(time_from)
     time_till = parse_int_param(time_till)
 
-    client = get_zabbix_client()
     params = {
         "itemids": itemids,
         "limit": limit
@@ -89,6 +82,16 @@ def trend_get(
     return format_response(result)
 
 
+def trend_get(
+    itemids: Annotated[Union[List[Any], str, int], Field(description="监控项ID（必填）")],
+    time_from: Annotated[Union[int, str, None], Field(description="起始时间（支持相对时间如7d）")] = None,
+    time_till: Annotated[Union[int, str, None], Field(description="截止时间")] = None,
+    limit: Annotated[Union[int, str, None], Field(description="返回条数（默认24）")] = 24
+) -> str:
+    """获取监控项趋势数据（每小时聚合）。摘要用trend_summary"""
+    return _trend_get_impl(get_zabbix_client(), itemids, time_from, time_till, limit)
+
+
 def _trend_error(error_type: str, message: str, itemids: List[str]) -> TrendSummaryErrorResponse:
     return TrendSummaryErrorResponse(
         error_type=error_type,
@@ -97,15 +100,7 @@ def _trend_error(error_type: str, message: str, itemids: List[str]) -> TrendSumm
     )
 
 
-def trend_summary(
-    itemids: Annotated[Union[List[Any], str, int], Field(description="监控项ID（最多3个）")],
-    hours: Annotated[int, Field(description="查询时长。建议：磁盘168h、内存72h、CPU24h、网络48h")] = 24,
-) -> Union[
-    TrendSummaryResult,
-    TrendSummaryErrorResponse,
-    List[Union[TrendSummaryResult, TrendSummaryErrorResponse]],
-]:
-    """按趋势桶样本数加权汇总，并返回时间桶与样本覆盖情况。"""
+def _trend_summary_impl(client, itemids, hours):
     parsed_itemids = parse_list_param(itemids) or []
     normalized_itemids = [str(itemid).strip() for itemid in parsed_itemids if str(itemid).strip()]
     parsed_hours = parse_int_param(hours)
@@ -118,7 +113,6 @@ def trend_summary(
 
     time_till = int(time.time())
     time_from = time_till - parsed_hours * 3600
-    client = get_zabbix_client()
     try:
         items_info = client.item.get(
             itemids=normalized_itemids,
@@ -253,3 +247,15 @@ def trend_summary(
         ))
 
     return results[0] if len(results) == 1 else results
+
+
+def trend_summary(
+    itemids: Annotated[Union[List[Any], str, int], Field(description="监控项ID（最多3个）")],
+    hours: Annotated[int, Field(description="查询时长。建议：磁盘168h、内存72h、CPU24h、网络48h")] = 24,
+) -> Union[
+    TrendSummaryResult,
+    TrendSummaryErrorResponse,
+    List[Union[TrendSummaryResult, TrendSummaryErrorResponse]],
+]:
+    """按趋势桶样本数加权汇总，并返回时间桶与样本覆盖情况。"""
+    return _trend_summary_impl(get_zabbix_client(), itemids, hours)
