@@ -6,6 +6,7 @@ from typing import Annotated, Any, Dict, List, Optional
 from pydantic import Field
 
 from client import get_zabbix_client
+from ._key_metrics import select_key_metrics
 from services.event_paginator import fetch_all_eventid_pages
 from services.problem_status import (
     AttentionStatus,
@@ -176,208 +177,23 @@ def check_host_health(
     if not actionable and not handled:
         result += "当前没有可验证的在触发问题。\n\n"
 
-    # 4. 获取关键指标
+    # 4. 获取关键指标（评分与选择见 _key_metrics，此处只负责展示）
     try:
-        # 智能评分算法（基于实际API查询结果）
-        category_rules = {
-            "cpu": {
-                "keywords": [
-                    # Linux 标准
-                    "system.cpu.util",
-                    # Windows perf_counter
-                    "perf_counter[\\processor", "perf_counter_en[\\processor",
-                    "processor information(_total)",
-                    # 华为服务器 iBMC
-                    "systemCpuUsage",
-                    # 华为存储 OceanStor
-                    "huawei.oceanstor.v6.controller.cpu",
-                    "huawei.5300.v5[hwInfoControllerCPUUsage",
-                    "huawei-server.systemCpuUsage",
-                    # Dell 服务器
-                    "dell.server.system.get",
-                    "dell.server.hw.diskarray",
-                    # 华鲲/浪潮等国产服务器
-                    "cpuAvailability", "cpuStatus[", "cpuCoreCount",
-                    # 通用硬件监控
-                    "hardware.cpu.usage",
-                    "ipmi.sensor", "snmp.cpu"
-                ],
-                "score": 100
-            },
-            "memory": {
-                "keywords": [
-                    # Linux 标准 - 使用率（已使用百分比）
-                    "vm.memory.size[pused]",
-                    "vm.memory.utilization", "vm.memory.util",
-                    # Linux 备选（原始值，降权）
-                    "vm.memory.size[used]",
-                    # Windows perf_counter
-                    "perf_counter[\\memory", "perf_counter_en[\\memory",
-                    # 华为服务器 iBMC
-                    "systemMemUsage",
-                    # 华为存储 OceanStor
-                    "huawei.oceanstor.v6.controller.memory",
-                    "huawei.5300.v5[hwInfoControllerMemoryUsage",
-                    "huawei-server.systemMemUsage",
-                    # 通用物理机
-                    "memoryStatus[", "memoryEntireStatus",
-                    "hardware.memory.usage",
-                    "ipmi.sensor", "snmp.memory"
-                ],
-                "score": 95
-            },
-            "disk": {
-                "keywords": [
-                    # Linux 空间使用率（高优先级）
-                    "vfs.fs.dependent.size[", ",pused]",
-                    # Linux inode（备选）
-                    "vfs.fs.dependent.inode[", ",pfree]",
-                    # Windows perf_counter
-                    "perf_counter[\\logicaldisk", "perf_counter_en[\\logicaldisk",
-                    "perf_counter[\\physicaldisk", "perf_counter_en[\\physicaldisk",
-                    # 华为存储
-                    "huawei.oceanstor.v6.capacity.used",
-                    "huawei.oceanstor.v6.lun.bps.total",
-                    # Dell 服务器磁盘
-                    "dell.server.hw.physicaldisk",
-                    # 国产服务器
-                    "hardDiskStatus[", "hardDiskEntireStatus",
-                    "diskPartitionUsage",
-                    # 通用硬件
-                    "hardware.disk.usage"
-                ],
-                "score": 95
-            },
-            "network": {
-                "keywords": [
-                    "net.if.in[", "net.if.out[", "net.if.total[",
-                    "perf_counter[\\network interface", "perf_counter_en[\\network interface",
-                    "huawei.oceanstor.v6.port.bps"
-                ],
-                "score": 65
-            }
-        }
-
-        # 降权关键词（避免误伤正常指标）
-        demote_keywords = [
-            "threshold", "阈值", "预警", "warn", "dynamic", "动态",
-            "forecast", "timeleft", "prediction",
-            "uptime", "version", "check", "ping"
+        grouped = select_key_metrics(items, max_disks=10)
+        key_items = [
+            entry.item
+            for category in ("cpu", "memory", "disk", "disk_io", "network")
+            for entry in grouped.get(category, [])
         ]
-
-        # 优先关键词（带]后缀的优先匹配Zabbix key模式）
-        prefer_keywords = ["pused]", "pfree]", "utilization", "usage", "% used"]
-
-        scored_items = []
-        for item in items:
-            name = item.get("name", "").lower()
-            key = item.get("key_", "").lower()
-            score = 0
-            category = None
-
-            # 分类评分
-            for cat, rule in category_rules.items():
-                for kw in rule["keywords"]:
-                    if kw.lower() in key or kw.lower() in name:
-                        score += rule["score"]
-                        category = cat
-                        break
-
-            if category and score > 0:
-                # 优先关键词加分
-                for pk in prefer_keywords:
-                    if pk in key or pk in name:
-                        score += 15
-
-                # 磁盘：优先空间使用率(size)而非inode
-                if category == "disk":
-                    if "vfs.fs.dependent.size[" in key:
-                        score += 20  # 额外加分，优先显示空间使用率
-                    elif "vfs.fs.dependent.inode[" in key:
-                        score -= 10  # inode降权
-
-                # 内存：优先使用率指标(pused/utilization)而非可用(available)
-                if category == "memory":
-                    if "pused]" in key or "utilization" in key or "usage" in key:
-                        score += 15  # 使用率指标优先
-                    elif "available]" in key or "free]" in key:
-                        score -= 10  # 可用/剩余空间降权
-                    # 降权swap/paging，避免与主内存混淆
-                    if "swap" in key or "paging" in key:
-                        score -= 40  # 大幅降权swap
-
-                # 降权关键词减分
-                for dk in demote_keywords:
-                    if dk in key or dk in name:
-                        score -= 30
-
-                # 活跃状态加分
-                lastvalue = item.get("lastvalue")
-                if lastvalue:
-                    try:
-                        if float(lastvalue) >= 0:
-                            score += 10
-                    except (TypeError, ValueError):
-                        pass
-
-                item["category"] = category
-                item["score"] = score
-                scored_items.append(item)
-
-        # 按评分降序，每类取最高分（磁盘允许多个）
-        category_items = {}
-        disk_items = []  # 特殊处理磁盘
-        for item in sorted(scored_items, key=lambda x: -x["score"]):
-            cat = item["category"]
-            if cat == "disk":
-                # 磁盘最多取10个（不同盘符），按实际使用率排序
-                if len(disk_items) < 10:
-                    # 检查是否已存在相同盘符的
-                    key = item.get("key_", "")
-                    is_duplicate = False
-                    for existing in disk_items:
-                        existing_key = existing.get("key_", "")
-                        # 提取盘符部分进行比较（如 size[C:, -> C:）
-                        key_drive = key.split("size[")[1].split(",")[0] if "size[" in key else key
-                        existing_drive = existing_key.split("size[")[1].split(",")[0] if "size[" in existing_key else existing_key
-                        if key_drive == existing_drive:
-                            is_duplicate = True
-                            break
-                    if not is_duplicate:
-                        disk_items.append(item)
-            elif cat not in category_items:
-                category_items[cat] = item
-
-        # 将磁盘项目加入（按使用率排序，高的在前）
-        disk_items_sorted = sorted(
-            disk_items,
-            key=lambda x: float(x.get("lastvalue", 0)) if x.get("lastvalue") else 0,
-            reverse=True
-        )
-        for disk_item in disk_items_sorted:
-            category_items[f"disk_{len([k for k in category_items if k.startswith('disk')])}"] = disk_item
-
-        # 转为分类标签
-        category_labels = {
-            "cpu": "CPU使用率",
-            "memory": "内存使用率",
-            "disk": "磁盘使用率",
-            "network": "网络流量"
-        }
-
-        key_items = []
-        for cat, item in category_items.items():
-            item["category"] = category_labels.get(cat, cat)
-            key_items.append(item)
 
         if key_items:
             result += "### 关键指标\n"
             result += "| 指标 | 当前值 |\n|------|--------|\n"
-            for item in key_items[:10]:  # 最多显示10个
-                name = item.get("name", "Unknown")
-                value = item.get("lastvalue", "N/A")
-                units = item.get("units", "")
-                key = item.get("key_", "")
+            for item_row in key_items[:10]:
+                name = item_row.get("name", "Unknown")
+                value = item_row.get("lastvalue", "N/A")
+                units = item_row.get("units", "")
+                key = item_row.get("key_", "")
 
                 # 过滤inode项，只保留空间使用率
                 if "inode" in key.lower():

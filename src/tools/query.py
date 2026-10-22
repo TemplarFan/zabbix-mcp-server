@@ -8,6 +8,7 @@ from pydantic import Field
 
 from client import get_zabbix_client
 from services.event_paginator import iter_eventid_pages
+from ._key_metrics import select_key_metrics
 from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param
 from utils.format import format_response
 
@@ -152,209 +153,25 @@ def item_get(
         )
 
         if all_items:
-            # 智能评分筛选算法
-            scored_items = []
+            grouped = select_key_metrics(all_items)
+            selected: List[Dict[str, Any]] = []
+            seen_ids = set()
 
-            # 分类评分规则（基于实际API查询结果修正）
-            category_rules = {
-                # CPU使用率 - 最高优先级
-                "cpu": {
-                    "keywords": [
-                        "system.cpu.intr",              # Linux CPU中断
-                        "system.cpu.load",              # Linux CPU负载
-                        "perf_counter[\\processor",     # Windows CPU
-                        "perf_counter_en[\\processor",  # Windows CPU (英文版)
-                        "huawei-server.systemCpuUsage", # 华为物理机
-                        "huawei.5300.v5[hwInfoControllerCPUUsage",  # 华为存储
-                        # 通用物理机/服务器监控
-                        "ipmi.sensor",                  # IPMI 传感器（Dell/HP等）
-                        "hardware.cpu.usage",           # 通用硬件CPU
-                        "dell.server.cpu",              # Dell 服务器
-                        "hp.server.cpu",                # HP 服务器
-                        "snmp.cpu"                      # SNMP CPU监控
-                    ],
-                    "score": 100
-                },
-                # 内存使用率 - 高优先级
-                "memory": {
-                    "keywords": [
-                        "vm.memory.size[pavailable]",    # Linux 内存百分比（优先）
-                        "vm.memory.size[pused]",         # Linux 内存已用百分比
-                        "perf_counter[\\memory",         # Windows 内存
-                        "perf_counter_en[\\memory",      # Windows 内存 (英文版)
-                        "huawei-server.systemMemUsage",  # 华为物理机
-                        "huawei.5300.v5[hwInfoControllerMemoryUsage",  # 华为存储
-                        # 通用物理机/服务器监控
-                        "ipmi.sensor",                   # IPMI 内存（Dell/HP等）
-                        "hardware.memory.usage",         # 通用硬件内存
-                        "dell.server.memory",            # Dell 服务器
-                        "hp.server.memory",              # HP 服务器
-                        "snmp.memory"                    # SNMP 内存监控
-                    ],
-                    "score": 95
-                },
-                # 磁盘使用率 - 高优先级
-                "disk": {
-                    "keywords": [
-                        "vfs.fs.dependent.size[pused]",   # Linux/Windows 空间使用率
-                        "vfs.fs.dependent.inode[pfree]",  # Linux Inode使用率
-                        "vfs.fs.dependent.inode[pused]",  # Linux Inode已用
-                        "perf_counter[\\logicaldisk",     # Windows 逻辑磁盘
-                        "perf_counter_en[\\logicaldisk",  # Windows 逻辑磁盘(英文)
-                        "dell.server.hw.physicaldisk",    # Dell 物理磁盘
-                        "hardware.disk.usage"             # 通用硬件磁盘
-                    ],
-                    "score": 95
-                },
-                # 磁盘IO（次选）
-                "disk_io": {
-                    "keywords": [
-                        "vfs.dev.queue_size",            # Linux 磁盘队列
-                        "vfs.dev.read.rate",             # Linux 读速率
-                        "vfs.dev.write.rate",            # Linux 写速率
-                        "perf_counter[\\physicaldisk",   # Windows 物理磁盘
-                        "perf_counter_en[\\physicaldisk" # Windows 物理磁盘(英文)
-                    ],
-                    "score": 70
-                },
-                # 网络流量
-                "network": {
-                    "keywords": [
-                        "net.if.in[",                   # 入流量
-                        "net.if.out[",                  # 出流量
-                        "perf_counter[\\network",       # Windows 网络
-                        "perf_counter_en[\\network"     # Windows 网络(英文)
-                    ],
-                    "score": 65
-                }
-            }
-
-            # 硬排除关键词（这些指标完全不适合趋势分析）
-            exclude_keywords = [
-                # 预测类指标（用户自定义）
-                "timeleft", "timeleft12", "timeleft.poly", "forecast", "prediction",
-                # 阈值类指标（动态计算）
-                "dynamic_threshold", "threshold",
-                # Inode 指标（非空间使用率，但保留作为备选）
-                # "vfs.fs.dependent.inode",  # 注释掉，因为用户环境在用这个
-                # 非百分比内存指标（字节数，趋势意义不大）
-                "vm.memory.size[available]", "vm.memory.size[total]", "vm.memory.size[used]",
-                "vm.memory.size[free]",
-                # 系统信息类
-                "uptime", "version", "check", "ping", "hostname", "uname",
-                "interrupts per second", "intr",  # 中断次数不是使用率
-                # 状态类
-                "status", "operstate", "readonly", "contents", "cksum",
-                "entirestatus", "health",
-                # 总计/常量类
-                "total", "maxfiles", "maxproc", "num", "packages.get",
-                "memory size", "cache bytes"  # Windows内存字节数
-            ]
-
-            # 强降权关键词（阈值、动态计算值等非实际指标）
-            threshold_keywords = [
-                "threshold", "阈值", "预警", "warn", "dynamic", "动态", "预测",
-                "forecast", "per_core", "avg1", "avg5", "avg15"  # 这些是负载细分指标
-            ]
-
-            # 优先关键词（有这些词加分）
-            prefer_keywords = ["pavailable", "pused", "pfree", "utilization", "usage"]
-
-            for item in all_items:
-                name_lower = item.get("name", "").lower()
-                key_lower = item.get("key_", "").lower()
-
-                # 硬排除：如果匹配排除关键词，直接跳过
-                should_exclude = False
-                for exclude_kw in exclude_keywords:
-                    if exclude_kw.lower() in name_lower or exclude_kw.lower() in key_lower:
-                        should_exclude = True
+            # 每个核心类别先取最佳，再从磁盘多分区/其余类别按分补足至 3 个
+            for category in ("cpu", "memory", "disk", "disk_io", "network"):
+                for entry in grouped.get(category, []):
+                    if entry.item["itemid"] not in seen_ids:
+                        selected.append(entry.item)
+                        seen_ids.add(entry.item["itemid"])
+                    break
+            for category in ("disk", "disk_io", "network", "cpu", "memory"):
+                for entry in grouped.get(category, []):
+                    if len(selected) >= 3:
                         break
-                if should_exclude:
-                    continue
-
-                # 计算分数
-                score = 0
-                categories = []
-
-                for category, rule in category_rules.items():
-                    for kw in rule["keywords"]:
-                        kw_lower = kw.lower()
-                        if kw_lower in name_lower or kw_lower in key_lower:
-                            score += rule["score"]
-                            categories.append(category)
-                            break  # 每个类别只加一次分
-
-                # 优先关键词加分（有百分比/使用率关键词）
-                for prefer_kw in prefer_keywords:
-                    if prefer_kw in key_lower or prefer_kw in name_lower:
-                        score += 15
-
-                # 强降权：阈值/动态计算类指标（非实际观测值）
-                for threshold_kw in threshold_keywords:
-                    if threshold_kw in name_lower or threshold_kw in key_lower:
-                        score -= 50  # 大幅降权
-
-                # 活跃状态加分（有最新数据的）
-                lastvalue = item.get("lastvalue")
-                if lastvalue:
-                    try:
-                        if float(lastvalue) > 0:
-                            score += 10
-                    except (ValueError, TypeError):
-                        # 非数字值（如字符串状态），给予基础活跃分
-                        score += 5
-
-                # 数值类型优先（方便趋势分析）
-                if item.get("value_type") in ["0", "3"]:  # float或unsigned
-                    score += 5
-
-                if score > 0:
-                    scored_items.append({
-                        "item": item,
-                        "score": score,
-                        "categories": categories
-                    })
-
-            # 按分数排序
-            scored_items.sort(key=lambda x: x["score"], reverse=True)
-
-            # 精选策略：严格限制每个核心类别只选一个最佳指标
-            selected_items = []
-            selected_ids = set()
-            # 核心类别映射：主类别 -> 包含的子类别
-            category_mapping = {
-                "cpu": ["cpu", "cpu_load"],
-                "memory": ["memory"],
-                "disk": ["disk", "disk_io"]
-            }
-            covered_main_categories = set()
-
-            # 第一轮：每个核心类别只选一个最高分
-            for main_cat, sub_cats in category_mapping.items():
-                if len(selected_items) >= 3:  # 严格限制最多3个
-                    break
-                # 找出属于该类别的所有项目，按分数排序
-                cat_items = [s for s in scored_items if any(c in sub_cats for c in s["categories"])]
-                if cat_items:
-                    # 选该类别分数最高的一个
-                    best = cat_items[0]
-                    item_id = best["item"]["itemid"]
-                    if item_id not in selected_ids:
-                        selected_items.append(best["item"])
-                        selected_ids.add(item_id)
-                        covered_main_categories.add(main_cat)
-
-            # 第二轮：如果还有空位，从其他高分项目填补（但限制总数为3）
-            for scored in scored_items:
-                if len(selected_items) >= 3:
-                    break
-                item_id = scored["item"]["itemid"]
-                if item_id not in selected_ids:
-                    selected_items.append(scored["item"])
-                    selected_ids.add(item_id)
-
-            return format_response(selected_items)
+                    if entry.item["itemid"] not in seen_ids:
+                        selected.append(entry.item)
+                        seen_ids.add(entry.item["itemid"])
+            return format_response(selected[:3])
 
     # 4. 语义增强 - 基于实际 Zabbix 环境的通用搜索模式
     # 覆盖 Linux/Windows/物理机(Dell/HP/华为)/存储设备的实际 key 命名
