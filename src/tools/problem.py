@@ -135,13 +135,7 @@ def _parse_problem_time_range(value: Optional[str], analysis_clock: int) -> Opti
     return time_from
 
 
-def get_problem_summary(
-    hostids: Annotated[Union[str, int, None], Field(description="主机ID（不支持主机名，需先查host_get）")] = None,
-    time_range: Annotated[Optional[str], Field(description="可选时间范围；不传时查询全部原始当前问题，传入7d/24h等时只筛选开始时间")] = None,
-    group_by: Annotated[str, Field(description="明细分组方式：severity或host")] = "severity",
-    view: Annotated[str, Field(description="查询视图：current当前仍在触发分组、actionable当前需处理、handled_active已处置但仍触发")] = "current",
-) -> str:
-    """查询统一分类后的当前问题摘要。历史事件用event_get"""
+def _get_problem_summary_impl(client, hostids=None, time_range=None, group_by="severity", view="current"):
     if group_by not in {"severity", "host"}:
         return "获取问题摘要失败: group_by 仅支持 severity 或 host"
     if view not in PROBLEM_VIEW_LABELS:
@@ -152,7 +146,7 @@ def get_problem_summary(
     try:
         time_from = _parse_problem_time_range(time_range, analysis_clock)
         summary = analyze_current_problems(
-            get_zabbix_client(),
+            client,
             analysis_clock=analysis_clock,
             hostids=[str(value) for value in hostid_list] if hostid_list else None,
             time_from=time_from,
@@ -160,6 +154,16 @@ def get_problem_summary(
         return _render_problem_summary(summary, view, group_by, time_range)
     except Exception as exc:
         return f"获取问题摘要失败: {exc}"
+
+
+def get_problem_summary(
+    hostids: Annotated[Union[str, int, None], Field(description="主机ID（不支持主机名，需先查host_get）")] = None,
+    time_range: Annotated[Optional[str], Field(description="可选时间范围；不传时查询全部原始当前问题，传入7d/24h等时只筛选开始时间")] = None,
+    group_by: Annotated[str, Field(description="明细分组方式：severity或host")] = "severity",
+    view: Annotated[str, Field(description="查询视图：current当前仍在触发分组、actionable当前需处理、handled_active已处置但仍触发")] = "current",
+) -> str:
+    """查询统一分类后的当前问题摘要。历史事件用event_get"""
+    return _get_problem_summary_impl(get_zabbix_client(), hostids, time_range, group_by, view)
 
 
 def _format_problem_fact_time(clock: Optional[int]) -> str:
@@ -296,17 +300,14 @@ def _render_problem_fact_detail(fact: ProblemFact) -> str:
     return "\n".join(lines)
 
 
-def get_problem_fact_detail(
-    eventid: Annotated[Union[str, int], Field(description="问题事件ID（不是触发器ID）")],
-) -> str:
-    """按问题事件 ID 查询真实恢复、人工处置和当前监控状态。"""
+def _get_problem_fact_detail_impl(client, eventid):
     normalized_eventid = str(eventid).strip()
     if not normalized_eventid.isdigit() or int(normalized_eventid) <= 0:
         return "查询具体问题失败: eventid 必须是正整数"
 
     try:
         fact = analyze_problem_event(
-            get_zabbix_client(),
+            client,
             normalized_eventid,
             analysis_clock=int(time.time()),
         )
@@ -318,5 +319,12 @@ def get_problem_fact_detail(
     if fact is None:
         return f"未找到问题事件: {normalized_eventid}"
     return _render_problem_fact_detail(fact)
+
+
+def get_problem_fact_detail(
+    eventid: Annotated[Union[str, int], Field(description="问题事件ID（不是触发器ID）")],
+) -> str:
+    """按问题事件 ID 查询真实恢复、人工处置和当前监控状态。"""
+    return _get_problem_fact_detail_impl(get_zabbix_client(), eventid)
 
 
