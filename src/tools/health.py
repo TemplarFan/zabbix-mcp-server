@@ -23,7 +23,6 @@ from ._analysis_common import (
 )
 
 
-
 def _resolve_health_host(client: Any, identifier: str) -> Optional[Dict[str, Any]]:
     """按明确路由解析主机，不把 API 失败伪装成未找到。"""
     output = ["hostid", "host", "name", "status", "active_available"]
@@ -448,8 +447,6 @@ def _quick_status_impl(client, include_disabled=False, include_offline=True):
 
     except Exception as e:
         return f"获取整体状态失败: {str(e)}"
-
-
 
 
 def quick_status(

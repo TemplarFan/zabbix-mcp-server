@@ -108,8 +108,6 @@ def _host_get_impl(client, hostids=None, name=None, groupids=None, templateids=N
         return f"查询过程中出现异常: {str(e)}"
 
 
-
-
 def host_get(
     hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID（单个或逗号分隔多个）")] = None,
     name: Annotated[Optional[str], Field(description="主机名关键词，模糊匹配")] = None,
@@ -409,8 +407,6 @@ def _item_get_impl(client, itemids=None, hostids=None, search=None, limit=None, 
     return format_response(result)
 
 
-
-
 def item_get(
     itemids: Annotated[Union[List[Any], str, int, None], Field(description="监控项ID")] = None,
     hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID")] = None,
@@ -476,8 +472,6 @@ def _trigger_get_impl(client, triggerids=None, hostids=None, groupids=None, temp
 
     result = client.trigger.get(**params)
     return format_response(result)
-
-
 
 
 def trigger_get(
@@ -650,8 +644,6 @@ def _event_get_impl(client, eventids=None, groupids=None, hostids=None, objectid
     return prefix + format_response(returned_rows)
 
 
-
-
 def event_get(
     eventids: Annotated[Union[List[Any], str, int, None], Field(description="事件ID")] = None,
     groupids: Annotated[Union[List[Any], str, int, None], Field(description="群组ID筛选")] = None,
@@ -708,8 +700,6 @@ def _history_get_impl(client, itemids, history=0, time_from=None, time_till=None
     return format_response(result)
 
 
-
-
 def history_get(
     itemids: Annotated[Union[List[Any], str, int], Field(description="监控项ID（必填）")],
     history: Annotated[Union[int, str], Field(description="数据类型（0float/1char/2log/3uint/4text）")] = 0,
@@ -746,8 +736,6 @@ def _hostgroup_get_impl(client, name=None, limit=50):
     return format_response(result)
 
 
-
-
 def hostgroup_get(
     name: Annotated[Optional[str], Field(description="群组名称关键词（模糊搜索）")] = None,
     limit: Annotated[Union[int, str, None], Field(description="返回数量（默认50）")] = 50
@@ -779,8 +767,6 @@ def _hostgroup_get_hosts_impl(client, groupids, limit=50):
 
     summary = f"群组 {groupids} 下共 {total} 台主机（启用: {enabled}, 禁用: {disabled})\n\n"
     return summary + format_response(result)
-
-
 
 
 def hostgroup_get_hosts(
