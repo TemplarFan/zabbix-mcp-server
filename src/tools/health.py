@@ -87,15 +87,8 @@ def _interface_availability(
     return "未知"
 
 
-def check_host_health(
-    host_identifier: Annotated[str, Field(description="主机标识（IP/主机名/hostid）")],
-    time_range: Annotated[str, Field(description="告警时间范围（默认24h）")] = "24h",
-    include_trends: Annotated[bool, Field(description="是否包含趋势数据")] = False,
-    trend_hours: Annotated[int, Field(description="趋势数据查询时长")] = 24,
-    include_oracle: Annotated[bool, Field(description="是否查询Oracle相关指标")] = False
-) -> str:
+def _check_host_health_impl(client, host_identifier, time_range="24h", include_trends=False, trend_hours=24, include_oracle=False):
     """按主机查询接口可用性、统一当前问题分类和关键指标。"""
-    client = get_zabbix_client()
     now = int(time.time())
     try:
         time_from = _parse_problem_time_range(time_range, now)
@@ -228,6 +221,19 @@ def check_host_health(
     return result
 
 
+def check_host_health(
+    host_identifier: Annotated[str, Field(description="主机标识（IP/主机名/hostid）")],
+    time_range: Annotated[str, Field(description="告警时间范围（默认24h）")] = "24h",
+    include_trends: Annotated[bool, Field(description="是否包含趋势数据")] = False,
+    trend_hours: Annotated[int, Field(description="趋势数据查询时长")] = 24,
+    include_oracle: Annotated[bool, Field(description="是否查询Oracle相关指标")] = False
+) -> str:
+    """按主机查询接口可用性、统一当前问题分类和关键指标。"""
+    return _check_host_health_impl(
+        get_zabbix_client(), host_identifier, time_range, include_trends, trend_hours, include_oracle,
+    )
+
+
 def _fetch_eventid_pages(
     endpoint: Any,
     base_params: Dict[str, Any],
@@ -264,13 +270,8 @@ def _append_severity_summary(
     return result
 
 
-def quick_status(
-    include_disabled: Annotated[bool, Field(description="列出停用主机列表（默认False，只显示统计数字）")] = False,
-    include_offline: Annotated[bool, Field(description="列出离线主机列表（默认True）")] = True
-) -> str:
+def _quick_status_impl(client, include_disabled=False, include_offline=True):
     """查看主机、统一当前问题分类及最近二十四小时事件。"""
-    client = get_zabbix_client()
-
     try:
         # 1. 主机统计
         # Zabbix 7.0: 可用性字段在 interfaces 中，需要通过 selectInterfaces 获取
@@ -449,3 +450,11 @@ def quick_status(
         return f"获取整体状态失败: {str(e)}"
 
 
+
+
+def quick_status(
+    include_disabled: Annotated[bool, Field(description="列出停用主机列表（默认False，只显示统计数字）")] = False,
+    include_offline: Annotated[bool, Field(description="列出离线主机列表（默认True）")] = True
+) -> str:
+    """查看主机、统一当前问题分类及最近二十四小时事件。"""
+    return _quick_status_impl(get_zabbix_client(), include_disabled, include_offline)
