@@ -180,11 +180,7 @@ def _empty_host_alert_history(
     )
 
 
-def host_alert_history(
-    hostid: Annotated[Union[str, int], Field(description="主机ID")],
-    triggerid: Annotated[Union[str, int], Field(description="触发器ID")],
-    days: Annotated[int, Field(description=f"查询天数（默认{DEFAULT_QUERY_DAYS}）")] = DEFAULT_QUERY_DAYS,
-) -> HostAlertHistoryResult:
+def _host_alert_history_impl(client, hostid, triggerid, days=DEFAULT_QUERY_DAYS):
     """查询完整分页、精确恢复配对的主机与触发器告警历史。"""
     normalized_hostid = str(hostid)
     normalized_triggerid = str(triggerid)
@@ -195,7 +191,6 @@ def host_alert_history(
             error="days 必须大于 0",
         )
 
-    client = get_zabbix_client()
     analysis_clock = int(time.time())
     time_from = analysis_clock - days * 86400
     try:
@@ -313,3 +308,12 @@ def host_alert_history(
         ),
         alerts_before=alerts_before,
     )
+
+
+def host_alert_history(
+    hostid: Annotated[Union[str, int], Field(description="主机ID")],
+    triggerid: Annotated[Union[str, int], Field(description="触发器ID")],
+    days: Annotated[int, Field(description=f"查询天数（默认{DEFAULT_QUERY_DAYS}）")] = DEFAULT_QUERY_DAYS,
+) -> HostAlertHistoryResult:
+    """查询完整分页、精确恢复配对的主机与触发器告警历史。"""
+    return _host_alert_history_impl(get_zabbix_client(), hostid, triggerid, days)
