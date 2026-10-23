@@ -8,6 +8,7 @@ from pydantic import Field
 
 from client import get_zabbix_client
 from utils.params import parse_int_param, parse_list_param
+from utils.format import guard_text
 from services.problem_status import (
     AttentionStatus,
     IndeterminateReason,
@@ -151,7 +152,10 @@ def _get_problem_summary_impl(client, hostids=None, time_range=None, group_by="s
             hostids=[str(value) for value in hostid_list] if hostid_list else None,
             time_from=time_from,
         )
-        return _render_problem_summary(summary, view, group_by, time_range)
+        return guard_text(
+            _render_problem_summary(summary, view, group_by, time_range),
+            hint="传入 hostids 聚焦单台主机，或用 time_range 缩小范围",
+        )
     except Exception as exc:
         return f"获取问题摘要失败: {exc}"
 
@@ -318,7 +322,7 @@ def _get_problem_fact_detail_impl(client, eventid):
 
     if fact is None:
         return f"未找到问题事件: {normalized_eventid}"
-    return _render_problem_fact_detail(fact)
+    return guard_text(_render_problem_fact_detail(fact))
 
 
 def get_problem_fact_detail(

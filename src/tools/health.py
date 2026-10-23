@@ -7,6 +7,7 @@ from pydantic import Field
 
 from client import get_zabbix_client
 from ._key_metrics import select_key_metrics
+from utils.format import guard_text
 from services.event_paginator import fetch_all_eventid_pages
 from services.problem_status import (
     AttentionStatus,
@@ -217,7 +218,7 @@ def _check_host_health_impl(client, host_identifier, time_range="24h", include_t
     except Exception as e:
         result += f"### 关键指标\n获取失败: {str(e)}\n\n"
 
-    return result
+    return guard_text(result, hint="可缩短 time_range 或聚焦单台主机")
 
 
 def check_host_health(
@@ -443,7 +444,7 @@ def _quick_status_impl(client, include_disabled=False, include_offline=True):
             "事件总计",
         )
 
-        return result.rstrip()
+        return guard_text(result.rstrip())
 
     except Exception as e:
         return f"获取整体状态失败: {str(e)}"
