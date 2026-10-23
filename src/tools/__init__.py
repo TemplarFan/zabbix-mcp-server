@@ -6,7 +6,10 @@ from .query import host_get, hostgroup_get, hostgroup_get_hosts, host_software_i
 from .update import host_update
 
 # Analysis tools (分析摘要)
-from .analysis import trend_get, trend_summary, get_problem_summary, get_problem_fact_detail, check_host_health, quick_status, host_alert_history
+from .trend import trend_get, trend_summary
+from .problem import get_problem_summary, get_problem_fact_detail
+from .health import check_host_health, quick_status
+from .history import host_alert_history
 
 # Report tools (报表)
 from .report import event_daily_report, event_weekly_report, event_monthly_report
