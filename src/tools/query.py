@@ -47,20 +47,8 @@ def _format_events_as_table(events: list) -> str:
     return "\n".join(lines)
 
 
-def host_get(
-    hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID（单个或逗号分隔多个）")] = None,
-    name: Annotated[Optional[str], Field(description="主机名关键词，模糊匹配")] = None,
-    groupids: Annotated[Union[List[Any], str, int, None], Field(description="主机组ID筛选")] = None,
-    templateids: Annotated[Union[List[Any], str, int, None], Field(description="模板ID筛选")] = None,
-    output: Annotated[Union[str, List[str], None], Field(description="返回字段列表")] = None,
-    search: Annotated[Union[Dict[str, str], str, None], Field(description="搜索条件字典")] = None,
-    filter: Annotated[Union[Dict[str, Any], str, None], Field(description="精确过滤条件")] = None,
-    selectGroups: Annotated[bool, Field(description="是否返回主机所属群组信息")] = False,
-    selectInventory: Annotated[bool, Field(description="是否返回主机资产信息")] = False,
-    limit: Annotated[Union[int, str, None], Field(description="返回数量（默认10）")] = 10
-) -> str:
+def _host_get_impl(client, hostids=None, name=None, groupids=None, templateids=None, output=None, search=None, filter=None, selectGroups=False, selectInventory=False, limit=10):
     """查询主机列表。支持ID精确查询或名称模糊匹配，已知IP时优先用get_host_by_ip"""
-    client = get_zabbix_client()
 
     # 1. 解析参数
     hostids = parse_list_param(hostids)
@@ -120,16 +108,26 @@ def host_get(
         return f"查询过程中出现异常: {str(e)}"
 
 
-def item_get(
-    itemids: Annotated[Union[List[Any], str, int, None], Field(description="监控项ID")] = None,
-    hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID")] = None,
-    search: Annotated[Union[Dict[str, str], str, None], Field(description="搜索关键词或条件字典（支持语义搜索如memory/cpu）")] = None,
-    limit: Annotated[Union[int, str, None], Field(description="返回数量（默认20）")] = None,
-    output: Annotated[Any, Field(description="返回字段列表")] = None,
-    key_metrics_only: Annotated[bool, Field(description="仅返回关键性能指标（CPU/内存/磁盘），每类最多1个")] = False
+
+
+def host_get(
+    hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID（单个或逗号分隔多个）")] = None,
+    name: Annotated[Optional[str], Field(description="主机名关键词，模糊匹配")] = None,
+    groupids: Annotated[Union[List[Any], str, int, None], Field(description="主机组ID筛选")] = None,
+    templateids: Annotated[Union[List[Any], str, int, None], Field(description="模板ID筛选")] = None,
+    output: Annotated[Union[str, List[str], None], Field(description="返回字段列表")] = None,
+    search: Annotated[Union[Dict[str, str], str, None], Field(description="搜索条件字典")] = None,
+    filter: Annotated[Union[Dict[str, Any], str, None], Field(description="精确过滤条件")] = None,
+    selectGroups: Annotated[bool, Field(description="是否返回主机所属群组信息")] = False,
+    selectInventory: Annotated[bool, Field(description="是否返回主机资产信息")] = False,
+    limit: Annotated[Union[int, str, None], Field(description="返回数量（默认10）")] = 10
 ) -> str:
+    """查询主机列表。支持ID精确查询或名称模糊匹配，已知IP时优先用get_host_by_ip"""
+    return _host_get_impl(get_zabbix_client(), hostids, name, groupids, templateids, output, search, filter, selectGroups, selectInventory, limit)
+
+
+def _item_get_impl(client, itemids=None, hostids=None, search=None, limit=None, output=None, key_metrics_only=False):
     """查询监控项。需先通过host_get获取hostid。支持语义搜索，key_metrics_only智能筛选最佳指标"""
-    client = get_zabbix_client()
 
     # 1. 健壮性修复：强制将 search 解析为字典
     if isinstance(search, str):
@@ -411,20 +409,22 @@ def item_get(
     return format_response(result)
 
 
-def trigger_get(
-    triggerids: Annotated[Union[List[Any], str, int, None], Field(description="触发器ID")] = None,
-    hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID筛选")] = None,
-    groupids: Annotated[Union[List[Any], str, int, None], Field(description="群组ID筛选")] = None,
-    templateids: Annotated[Union[List[Any], str, int, None], Field(description="模板ID筛选")] = None,
-    priority: Annotated[Union[List[int], int, str, None], Field(description="严重级别（0未分类/1信息/2警告/3一般/4严重/5灾难）")] = None,
-    output: Annotated[Union[str, List[str], None], Field(description="返回字段列表")] = None,
-    search: Annotated[Union[Dict[str, str], str, None], Field(description="搜索条件")] = None,
-    filter: Annotated[Union[Dict[str, Any], str, None], Field(description="精确过滤条件")] = None,
-    limit: Annotated[Union[int, str, None], Field(description="返回数量（默认20）")] = 20,
-    include_expression: Annotated[bool, Field(description="是否返回触发表达式（默认False节省Token）")] = False
+
+
+def item_get(
+    itemids: Annotated[Union[List[Any], str, int, None], Field(description="监控项ID")] = None,
+    hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID")] = None,
+    search: Annotated[Union[Dict[str, str], str, None], Field(description="搜索关键词或条件字典（支持语义搜索如memory/cpu）")] = None,
+    limit: Annotated[Union[int, str, None], Field(description="返回数量（默认20）")] = None,
+    output: Annotated[Any, Field(description="返回字段列表")] = None,
+    key_metrics_only: Annotated[bool, Field(description="仅返回关键性能指标（CPU/内存/磁盘），每类最多1个")] = False
 ) -> str:
+    """查询监控项。需先通过host_get获取hostid。支持语义搜索，key_metrics_only智能筛选最佳指标"""
+    return _item_get_impl(get_zabbix_client(), itemids, hostids, search, limit, output, key_metrics_only)
+
+
+def _trigger_get_impl(client, triggerids=None, hostids=None, groupids=None, templateids=None, priority=None, output=None, search=None, filter=None, limit=20, include_expression=False):
     """查询触发器列表。priority=3,4,5只看严重以上级别"""
-    client = get_zabbix_client()
 
     # Parse parameters
     triggerids = parse_list_param(triggerids)
@@ -478,6 +478,24 @@ def trigger_get(
     return format_response(result)
 
 
+
+
+def trigger_get(
+    triggerids: Annotated[Union[List[Any], str, int, None], Field(description="触发器ID")] = None,
+    hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID筛选")] = None,
+    groupids: Annotated[Union[List[Any], str, int, None], Field(description="群组ID筛选")] = None,
+    templateids: Annotated[Union[List[Any], str, int, None], Field(description="模板ID筛选")] = None,
+    priority: Annotated[Union[List[int], int, str, None], Field(description="严重级别（0未分类/1信息/2警告/3一般/4严重/5灾难）")] = None,
+    output: Annotated[Union[str, List[str], None], Field(description="返回字段列表")] = None,
+    search: Annotated[Union[Dict[str, str], str, None], Field(description="搜索条件")] = None,
+    filter: Annotated[Union[Dict[str, Any], str, None], Field(description="精确过滤条件")] = None,
+    limit: Annotated[Union[int, str, None], Field(description="返回数量（默认20）")] = 20,
+    include_expression: Annotated[bool, Field(description="是否返回触发表达式（默认False节省Token）")] = False
+) -> str:
+    """查询触发器列表。priority=3,4,5只看严重以上级别"""
+    return _trigger_get_impl(get_zabbix_client(), triggerids, hostids, groupids, templateids, priority, output, search, filter, limit, include_expression)
+
+
 def _parse_event_time_parameter(name: str, value: Any) -> Optional[int]:
     if value is None:
         return None
@@ -509,21 +527,7 @@ def _event_pagination_header(
     ])
 
 
-def event_get(
-    eventids: Annotated[Union[List[Any], str, int, None], Field(description="事件ID")] = None,
-    groupids: Annotated[Union[List[Any], str, int, None], Field(description="群组ID筛选")] = None,
-    hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID")] = None,
-    objectids: Annotated[Union[List[Any], str, int, None], Field(description="触发器ID")] = None,
-    source: Annotated[Union[int, str, None], Field(description="事件来源（默认0触发器事件）")] = None,
-    object_: Annotated[Union[int, str, None], Field(description="事件对象类型")] = None,
-    value: Annotated[Union[int, str, None], Field(description="本地筛选事件状态（1问题发生/0恢复）")] = None,
-    severities: Annotated[Union[List[int], str, None], Field(description="严重级别列表")] = None,
-    time_from: Annotated[Union[int, str, None], Field(description="起始时间（支持7d/24h或Unix时间戳）")] = None,
-    time_till: Annotated[Union[int, str, None], Field(description="截止时间（支持相对时间或Unix时间戳）")] = None,
-    eventid_till: Annotated[Union[int, str, None], Field(description="下一页事件ID游标；首次查询不传")] = None,
-    limit: Annotated[Union[int, str, None], Field(description="最终返回数量（默认10，不是候选扫描上限）")] = 10,
-    output: Annotated[Any, Field(description="返回字段列表")] = None,
-) -> str:
+def _event_get_impl(client, eventids=None, groupids=None, hostids=None, objectids=None, source=None, object_=None, value=None, severities=None, time_from=None, time_till=None, eventid_till=None, limit=10, output=None):
     """查询原始历史事件；业务状态解释使用问题事实明细工具。"""
     parsed_limit = parse_int_param(limit)
     if parsed_limit is None or parsed_limit <= 0:
@@ -613,7 +617,6 @@ def event_get(
         if parsed is not None:
             base_params[key] = parsed
 
-    client = get_zabbix_client()
     returned_rows: List[Dict[str, Any]] = []
     scanned = 0
     has_more = False
@@ -647,15 +650,28 @@ def event_get(
     return prefix + format_response(returned_rows)
 
 
-def history_get(
-    itemids: Annotated[Union[List[Any], str, int], Field(description="监控项ID（必填）")],
-    history: Annotated[Union[int, str], Field(description="数据类型（0float/1char/2log/3uint/4text）")] = 0,
-    time_from: Annotated[Union[int, str, None], Field(description="起始时间（支持相对时间如7d/24h）")] = None,
-    time_till: Annotated[Union[int, str, None], Field(description="截止时间")] = None,
-    limit: Annotated[Union[int, str, None], Field(description="返回条数（默认10）")] = None,
-    sortfield: Annotated[str, Field(description="排序字段（默认clock）")] = "clock",
-    sortorder: Annotated[str, Field(description="排序方向（DESC/ASC）")] = "DESC"
+
+
+def event_get(
+    eventids: Annotated[Union[List[Any], str, int, None], Field(description="事件ID")] = None,
+    groupids: Annotated[Union[List[Any], str, int, None], Field(description="群组ID筛选")] = None,
+    hostids: Annotated[Union[List[Any], str, int, None], Field(description="主机ID")] = None,
+    objectids: Annotated[Union[List[Any], str, int, None], Field(description="触发器ID")] = None,
+    source: Annotated[Union[int, str, None], Field(description="事件来源（默认0触发器事件）")] = None,
+    object_: Annotated[Union[int, str, None], Field(description="事件对象类型")] = None,
+    value: Annotated[Union[int, str, None], Field(description="本地筛选事件状态（1问题发生/0恢复）")] = None,
+    severities: Annotated[Union[List[int], str, None], Field(description="严重级别列表")] = None,
+    time_from: Annotated[Union[int, str, None], Field(description="起始时间（支持7d/24h或Unix时间戳）")] = None,
+    time_till: Annotated[Union[int, str, None], Field(description="截止时间（支持相对时间或Unix时间戳）")] = None,
+    eventid_till: Annotated[Union[int, str, None], Field(description="下一页事件ID游标；首次查询不传")] = None,
+    limit: Annotated[Union[int, str, None], Field(description="最终返回数量（默认10，不是候选扫描上限）")] = 10,
+    output: Annotated[Any, Field(description="返回字段列表")] = None,
 ) -> str:
+    """查询原始历史事件；业务状态解释使用问题事实明细工具。"""
+    return _event_get_impl(get_zabbix_client(), eventids, groupids, hostids, objectids, source, object_, value, severities, time_from, time_till, eventid_till, limit, output)
+
+
+def _history_get_impl(client, itemids, history=0, time_from=None, time_till=None, limit=None, sortfield="clock", sortorder="DESC"):
     """获取监控项原始历史数据。长期趋势用trend_get"""
     # Parse parameters
     itemids = parse_list_param(itemids)
@@ -674,7 +690,6 @@ def history_get(
                "请使用相对时间格式：time_from='2h'（最近2小时）、time_from='24h'（最近24小时）、time_from='7d'（最近7天）\n" \
                "系统会自动计算正确的时间戳。"
 
-    client = get_zabbix_client()
     params = {
         "itemids": itemids,
         "history": history,
@@ -693,12 +708,23 @@ def history_get(
     return format_response(result)
 
 
-def hostgroup_get(
-    name: Annotated[Optional[str], Field(description="群组名称关键词（模糊搜索）")] = None,
-    limit: Annotated[Union[int, str, None], Field(description="返回数量（默认50）")] = 50
+
+
+def history_get(
+    itemids: Annotated[Union[List[Any], str, int], Field(description="监控项ID（必填）")],
+    history: Annotated[Union[int, str], Field(description="数据类型（0float/1char/2log/3uint/4text）")] = 0,
+    time_from: Annotated[Union[int, str, None], Field(description="起始时间（支持相对时间如7d/24h）")] = None,
+    time_till: Annotated[Union[int, str, None], Field(description="截止时间")] = None,
+    limit: Annotated[Union[int, str, None], Field(description="返回条数（默认10）")] = None,
+    sortfield: Annotated[str, Field(description="排序字段（默认clock）")] = "clock",
+    sortorder: Annotated[str, Field(description="排序方向（DESC/ASC）")] = "DESC"
 ) -> str:
+    """获取监控项原始历史数据。长期趋势用trend_get"""
+    return _history_get_impl(get_zabbix_client(), itemids, history, time_from, time_till, limit, sortfield, sortorder)
+
+
+def _hostgroup_get_impl(client, name=None, limit=50):
     """查询主机群组列表"""
-    client = get_zabbix_client()
     limit = parse_int_param(limit, 50)
 
     params = {
@@ -720,12 +746,18 @@ def hostgroup_get(
     return format_response(result)
 
 
-def hostgroup_get_hosts(
-    groupids: Annotated[Union[List[Any], str, int], Field(description="群组ID（单个或逗号分隔多个）")],
+
+
+def hostgroup_get(
+    name: Annotated[Optional[str], Field(description="群组名称关键词（模糊搜索）")] = None,
     limit: Annotated[Union[int, str, None], Field(description="返回数量（默认50）")] = 50
 ) -> str:
+    """查询主机群组列表"""
+    return _hostgroup_get_impl(get_zabbix_client(), name, limit)
+
+
+def _hostgroup_get_hosts_impl(client, groupids, limit=50):
     """查询群组内的主机列表。需先通过hostgroup_get获取groupid"""
-    client = get_zabbix_client()
     groupids = parse_list_param(groupids)
     limit = parse_int_param(limit, 50)
 
@@ -749,11 +781,18 @@ def hostgroup_get_hosts(
     return summary + format_response(result)
 
 
-def host_software_inventory_get(
-    host_identifier: Annotated[str, Field(description="主机标识（hostid/IP地址/主机名）")]
+
+
+def hostgroup_get_hosts(
+    groupids: Annotated[Union[List[Any], str, int], Field(description="群组ID（单个或逗号分隔多个）")],
+    limit: Annotated[Union[int, str, None], Field(description="返回数量（默认50）")] = 50
 ) -> str:
+    """查询群组内的主机列表。需先通过hostgroup_get获取groupid"""
+    return _hostgroup_get_hosts_impl(get_zabbix_client(), groupids, limit)
+
+
+def _host_software_inventory_get_impl(client, host_identifier):
     """查询单台主机的软件资产信息（software/software_full/software_app_a-e）"""
-    client = get_zabbix_client()
 
     # 软件相关字段
     software_fields = [
@@ -866,3 +905,12 @@ def host_software_inventory_get(
             lines.append(f"| {field_names[field]} | {value} |")
 
     return "\n".join(lines)
+
+
+def host_software_inventory_get(
+    host_identifier: Annotated[str, Field(description="主机标识（hostid/IP地址/主机名）")]
+) -> str:
+    """查询单台主机的软件资产信息（software/software_full/software_app_a-e）"""
+    return _host_software_inventory_get_impl(get_zabbix_client(), host_identifier)
+
+
