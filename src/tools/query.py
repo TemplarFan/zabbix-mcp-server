@@ -677,7 +677,7 @@ def _history_get_impl(client, itemids, history=0, time_from=None, time_till=None
     time_till = parse_time_param(time_till, 0) if time_till else None
 
     # 入口护栏：单次返回条数上限，超过提示分段查询
-    if limit and limit > HISTORY_MAX_LIMIT:
+    if limit and (limit > HISTORY_MAX_LIMIT or limit < 0):
         return (
             f"参数错误: limit 最大 {HISTORY_MAX_LIMIT}，请配合 time_from/time_till "
             "缩小时间范围或分批查询"

@@ -74,7 +74,7 @@ def _trend_get_impl(client, itemids, time_from=None, time_till=None, limit=24):
     time_till = parse_int_param(time_till)
 
     # 入口护栏：条数与时间跨度上限，超过提示分段查询
-    if limit and limit > TREND_MAX_LIMIT:
+    if limit and (limit > TREND_MAX_LIMIT or limit < 0):
         return f"参数错误: limit 最大 {TREND_MAX_LIMIT}，请分批查询"
     span_reference = time_till if time_till else int(time.time())
     if time_from and span_reference - time_from > TREND_MAX_SPAN_SECONDS:

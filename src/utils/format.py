@@ -119,24 +119,23 @@ def format_response(data: Any) -> str:
         return f"{UNTRUSTED_PREAMBLE}\n{text}"
 
     if isinstance(data, list):
-        envelope = _envelope_block([
-            f"结果超限已按条目截断: 原始 {len(data)} 条",
-            f"建议: {_DEFAULT_NARROWING_HINT}",
-        ])
-        head_room = limit - len(UNTRUSTED_PREAMBLE) - 1 - len(envelope) - 2
-        # 比例估算起点，向下逐条收缩直到适配预算
-        keep = max(1, int(len(data) * head_room / max(len(text), 1)) - 1)
+        # 比例估算起点，向下逐条收缩：每轮用"终版信封"（含已返回条数）重算预算，保证总长不超限
+        keep = max(1, int(len(data) * limit / max(len(text) + 100, 1)))
         while keep > 0:
+            envelope = _envelope_block([
+                f"结果超限已按条目截断: 原始 {len(data)} 条，已返回 {keep} 条",
+                f"建议: {_DEFAULT_NARROWING_HINT}",
+            ])
+            head_room = limit - len(UNTRUSTED_PREAMBLE) - 1 - len(envelope) - 2
             body = json.dumps(data[:keep], ensure_ascii=False, indent=2)
             if len(body) <= head_room:
                 break
             keep -= 1
-        returned = keep if keep > 0 else 0
-        envelope = _envelope_block([
-            f"结果超限已按条目截断: 原始 {len(data)} 条，已返回 {returned} 条",
-            f"建议: {_DEFAULT_NARROWING_HINT}",
-        ])
-        if returned == 0:
+        if keep <= 0:
+            envelope = _envelope_block([
+                f"结果超限且单条即超上限: 原始 {len(data)} 条，已返回 0 条",
+                f"建议: {_DEFAULT_NARROWING_HINT}",
+            ])
             return f"{UNTRUSTED_PREAMBLE}\n\n{envelope}"
         return f"{UNTRUSTED_PREAMBLE}\n{body}\n\n{envelope}"
 
