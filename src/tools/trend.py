@@ -10,6 +10,10 @@ from utils.params import parse_int_param, parse_list_param
 from utils.format import format_response
 from ._analysis_common import BEIJING_TZ
 
+# 入口护栏：单次返回条数与查询跨度上限（趋势为小时桶，31 天约 744 桶）
+TREND_MAX_LIMIT = 500
+TREND_MAX_SPAN_SECONDS = 31 * 86400
+
 
 class TrendStats(BaseModel):
     """基础统计指标（基于每小时聚合数据）"""
@@ -63,11 +67,21 @@ class TrendSummaryErrorResponse(BaseModel):
     itemids: List[str] = Field(description="请求的监控项ID列表")
 
 
-def _trend_get_impl(client, itemids, time_from, time_till, limit):
+def _trend_get_impl(client, itemids, time_from=None, time_till=None, limit=24):
     itemids = parse_list_param(itemids)
     limit = parse_int_param(limit, 24)
     time_from = parse_int_param(time_from)
     time_till = parse_int_param(time_till)
+
+    # 入口护栏：条数与时间跨度上限，超过提示分段查询
+    if limit and limit > TREND_MAX_LIMIT:
+        return f"参数错误: limit 最大 {TREND_MAX_LIMIT}，请分批查询"
+    span_reference = time_till if time_till else int(time.time())
+    if time_from and span_reference - time_from > TREND_MAX_SPAN_SECONDS:
+        return (
+            f"参数错误: 查询跨度超过 31 天（上限 {TREND_MAX_SPAN_SECONDS // 86400} 天），"
+            "请缩小 time_from/time_till 或分批查询"
+        )
 
     params = {
         "itemids": itemids,

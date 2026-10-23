@@ -1,6 +1,7 @@
 """Query Tools - MCP tools for basic data queries."""
 import json
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Any, Dict, List, Optional, Union
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 # 定义北京时区 (UTC+8)
 BEIJING_TZ = timezone(timedelta(hours=8))
 EVENT_QUERY_PAGE_SIZE = 1000
+HISTORY_MAX_LIMIT = 500
 
 
 def _format_events_as_table(events: list) -> str:
@@ -671,9 +673,15 @@ def _history_get_impl(client, itemids, history=0, time_from=None, time_till=None
     limit = parse_int_param(limit, 10)
     # 使用 parse_time_param 支持相对时间（如 "1h", "24h"）
     from utils.params import parse_time_param
-    import time
     time_from = parse_time_param(time_from, 0) if time_from else None
     time_till = parse_time_param(time_till, 0) if time_till else None
+
+    # 入口护栏：单次返回条数上限，超过提示分段查询
+    if limit and limit > HISTORY_MAX_LIMIT:
+        return (
+            f"参数错误: limit 最大 {HISTORY_MAX_LIMIT}，请配合 time_from/time_till "
+            "缩小时间范围或分批查询"
+        )
 
     # 时间戳合理性检查：如果 time_from 是过去超过7天的时间戳，提示使用相对时间
     current_time = int(time.time())
@@ -681,6 +689,12 @@ def _history_get_impl(client, itemids, history=0, time_from=None, time_till=None
         return "错误：time_from 时间戳太老（超过7天前），可能是手动计算错误。\n" \
                "请使用相对时间格式：time_from='2h'（最近2小时）、time_from='24h'（最近24小时）、time_from='7d'（最近7天）\n" \
                "系统会自动计算正确的时间戳。"
+
+    # 无时间下限时默认最近24小时，避免全量拉取
+    default_window = False
+    if time_from is None:
+        time_from = current_time - 86400
+        default_window = True
 
     params = {
         "itemids": itemids,
@@ -697,7 +711,10 @@ def _history_get_impl(client, itemids, history=0, time_from=None, time_till=None
         params["limit"] = limit
 
     result = client.history.get(**params)
-    return format_response(result)
+    output = format_response(result)
+    if default_window:
+        output += "\n/* 注: 未指定 time_from，默认查询最近24小时；需要更长范围请显式传入 */\n"
+    return output
 
 
 def history_get(
