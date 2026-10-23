@@ -9,12 +9,7 @@ from utils.params import parse_list_param
 from utils.format import format_response
 
 
-def host_update(
-    hostid: Annotated[Union[str, int], Field(description="主机ID")],
-    new_name: Annotated[Optional[str], Field(description="新可见名称")] = None,
-    add_groups: Annotated[Union[List, str, int, None], Field(description="要添加的群组ID（追加模式）")] = None,
-    remove_groups: Annotated[Union[List, str, int, None], Field(description="要移除的群组ID")] = None
-) -> str:
+def _host_update_impl(client, hostid, new_name=None, add_groups=None, remove_groups=None):
     """修改主机的可见名称和群组。群组参数为groupid（需先查询）"""
     validate_read_only()
 
@@ -24,7 +19,6 @@ def host_update(
     add_groupids = parse_list_param(add_groups) or []
     remove_groupids = parse_list_param(remove_groups) or []
 
-    client = get_zabbix_client()
     current = client.host.get(
         hostids=[hostid],
         output=["hostid", "name"],
@@ -72,3 +66,13 @@ def host_update(
         },
         "result": result
     })
+
+
+def host_update(
+    hostid: Annotated[Union[str, int], Field(description="主机ID")],
+    new_name: Annotated[Optional[str], Field(description="新可见名称")] = None,
+    add_groups: Annotated[Union[List, str, int, None], Field(description="要添加的群组ID（追加模式）")] = None,
+    remove_groups: Annotated[Union[List, str, int, None], Field(description="要移除的群组ID")] = None
+) -> str:
+    """修改主机的可见名称和群组。群组参数为groupid（需先查询）"""
+    return _host_update_impl(get_zabbix_client(), hostid, new_name, add_groups, remove_groups)
