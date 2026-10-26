@@ -41,3 +41,50 @@ def get_test_host_networks() -> tuple[ipaddress.IPv4Network, ...]:
         _cached_networks_env = raw
         _cached_test_networks = tuple(networks)
     return _cached_test_networks
+
+
+# ===== 工具级开关与来源白名单（安全加固） =====
+# 拒绝清单中的工具在注册期直接移除（模型不可见）；留空 = 全部启用。
+DENIED_TOOLS_ENV = "ZABBIX_DENY_TOOLS"
+
+# HTTP 传输的来源 IP/CIDR 白名单；留空 = 放行所有（opt-in）。
+ALLOWED_IPS_ENV = "ZABBIX_ALLOWED_IPS"
+
+_cached_denied_env: str | None = None
+_cached_denied_tools: tuple[str, ...] = ()
+
+_cached_allowed_env: str | None = None
+_cached_allowed_networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
+
+
+def get_denied_tools() -> tuple[str, ...]:
+    """读取拒绝工具名单（逗号分隔工具名）；留空返回空元组，按当前值缓存。"""
+    global _cached_denied_env, _cached_denied_tools
+    raw = os.environ.get(DENIED_TOOLS_ENV, "")
+    if raw != _cached_denied_env:
+        names = tuple(part.strip() for part in raw.split(",") if part.strip())
+        _cached_denied_env = raw
+        _cached_denied_tools = names
+    return _cached_denied_tools
+
+
+def get_allowed_ip_networks() -> tuple:
+    """读取来源白名单并解析为 ip_network 元组（裸 IP 视为 /32）。
+
+    留空返回空元组（调用方语义：不限制）；无效条目跳过并告警。
+    """
+    global _cached_allowed_env, _cached_allowed_networks
+    raw = os.environ.get(ALLOWED_IPS_ENV, "")
+    if raw != _cached_allowed_env:
+        networks = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                networks.append(ipaddress.ip_network(part, strict=False))
+            except ValueError:
+                logging.warning("Ignoring invalid entry in %s: %r", ALLOWED_IPS_ENV, part)
+        _cached_allowed_env = raw
+        _cached_allowed_networks = tuple(networks)
+    return _cached_allowed_networks

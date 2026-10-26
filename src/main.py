@@ -61,43 +61,65 @@ from tools import (
 )
 
 # Register host tools
-mcp.tool()(host_get)
-mcp.tool()(hostgroup_get)
-mcp.tool()(hostgroup_get_hosts)
-mcp.tool()(host_software_inventory_get)
-mcp.tool()(host_update)
+from config import DENIED_TOOLS_ENV, get_denied_tools
+
+_registered_tools: list[str] = []
+_attempted_tool_names: set[str] = set()
+
+
+def _register(tool_fn):
+    """注册工具；出现在 ZABBIX_DENY_TOOLS 中的工具跳过注册（模型不可见）。"""
+    name = tool_fn.__name__
+    _attempted_tool_names.add(name)
+    if name in get_denied_tools():
+        logger.warning("工具 %s 已被 %s 禁用，跳过注册", name, DENIED_TOOLS_ENV)
+        return
+    mcp.tool()(tool_fn)
+    _registered_tools.append(name)
+
+
+_register(host_get)
+_register(hostgroup_get)
+_register(hostgroup_get_hosts)
+_register(host_software_inventory_get)
+_register(host_update)
 
 # Register item tools
-mcp.tool()(item_get)
+_register(item_get)
 
 # Register trigger tools
-mcp.tool()(trigger_get)
+_register(trigger_get)
 
 # Register event tools
-mcp.tool()(event_get)
+_register(event_get)
 
 # Register history tools
-mcp.tool()(history_get)
+_register(history_get)
 
 # Register summary tools
-mcp.tool()(get_problem_summary)
-mcp.tool()(get_problem_fact_detail)
-mcp.tool()(check_host_health)
-mcp.tool()(quick_status)
-mcp.tool()(host_alert_history)
+_register(get_problem_summary)
+_register(get_problem_fact_detail)
+_register(check_host_health)
+_register(quick_status)
+_register(host_alert_history)
 
 # Register trend tools
-mcp.tool()(trend_get)
-mcp.tool()(trend_summary)
+_register(trend_get)
+_register(trend_summary)
 
 # Register report tools
-mcp.tool()(event_daily_report)
-mcp.tool()(event_weekly_report)
-mcp.tool()(event_monthly_report)
+_register(event_daily_report)
+_register(event_weekly_report)
+_register(event_monthly_report)
 
 # Register system tools
-mcp.tool()(apiinfo_version)
-mcp.tool()(get_host_by_ip)
+_register(apiinfo_version)
+_register(get_host_by_ip)
+
+_unknown_denied = set(get_denied_tools()) - _attempted_tool_names
+if _unknown_denied:
+    logger.warning("%s 含未知工具名（未匹配任何已注册工具）: %s",
+                   DENIED_TOOLS_ENV, ", ".join(sorted(_unknown_denied)))
 
 
 def main():
@@ -114,12 +136,19 @@ def main():
     if transport == "stdio":
         mcp.run(transport="stdio")
     elif transport == "streamable-http":
-        mcp.run(
-            transport="streamable-http",
-            host=host,
-            port=port,
-            stateless_http=stateless,
+        # 自建 Starlette 应用以挂载 IP 白名单中间件；stdio 无网络面不经过此路径。
+        # uvicorn 参数对齐 fastmcp 内部 run 的取值（lifespan/on、无优雅停机等待）。
+        from ip_filter import IPFilterMiddleware
+
+        app = mcp.http_app(transport="streamable-http", stateless_http=stateless)
+        app.add_middleware(IPFilterMiddleware)
+
+        import uvicorn
+        config = uvicorn.Config(
+            app, host=host, port=port,
+            lifespan="on", timeout_graceful_shutdown=0, log_level="info",
         )
+        uvicorn.Server(config).run()
     else:
         logger.error(f"Unknown transport: {transport}")
         sys.exit(1)
