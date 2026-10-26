@@ -11,7 +11,7 @@ from client import get_zabbix_client
 from services.event_paginator import iter_eventid_pages
 from ._key_metrics import select_key_metrics
 from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param
-from utils.format import format_response
+from utils.format import UNTRUSTED_PREAMBLE, format_response, get_max_response_chars
 
 logger = logging.getLogger(__name__)
 
@@ -538,6 +538,8 @@ def _event_get_impl(client, eventids=None, groupids=None, hostids=None, objectid
     parsed_limit = parse_int_param(limit)
     if parsed_limit is None or parsed_limit <= 0:
         return "参数错误: limit 必须是正整数"
+    if parsed_limit > HISTORY_MAX_LIMIT:
+        return f"参数错误: limit 最大 {HISTORY_MAX_LIMIT}，请配合 eventid_till 翻页分批获取"
 
     value_filter = parse_int_param(value) if value is not None else None
     if value is not None and value_filter not in {0, 1}:
@@ -546,8 +548,8 @@ def _event_get_impl(client, eventids=None, groupids=None, hostids=None, objectid
     cursor: Optional[str] = None
     if eventid_till is not None:
         cursor = str(eventid_till).strip()
-        if not cursor.isdigit() or int(cursor) <= 0:
-            return "参数错误: eventid_till 必须是正整数"
+        if not cursor.isdigit() or int(cursor) < 0:
+            return "参数错误: eventid_till 必须是非负整数"
 
     try:
         parsed_time_from = _parse_event_time_parameter("time_from", time_from)
@@ -643,6 +645,40 @@ def _event_get_impl(client, eventids=None, groupids=None, hostids=None, objectid
     except Exception as exc:
         return f"查询失败: {exc}"
 
+    # 翻页头与 JSON 体必须整体落在输出防护预算内：先按预算裁行，头部按实际给出的行数
+    # 如实申报（否则防护层再截会使头部谎报行数，模型按游标续查会静默跳过被截行）。
+    rows_before_guard = len(returned_rows)
+    guard_budget = (
+        get_max_response_chars()
+        - len(UNTRUSTED_PREAMBLE) - 1
+        - len(_event_pagination_header(scanned, 0, False, None)) - 2
+        - 72  # 头部行数/游标数字从模板值增长的最坏余量
+    )
+    if rows_before_guard and guard_budget <= 0:
+        return (
+            "参数错误: 输出上限配置过小，单条事件也放不下；"
+            "请调大 ZABBIX_MAX_RESPONSE_CHARS 或缩小 limit"
+        )
+    while returned_rows:
+        body = json.dumps(returned_rows, ensure_ascii=False, indent=2)
+        if len(body) <= guard_budget:
+            break
+        # 比例估算快速收缩，再逐行微调
+        returned_rows = returned_rows[:max(1, int(len(returned_rows) * guard_budget / len(body)))]
+        if len(json.dumps(returned_rows, ensure_ascii=False, indent=2)) <= guard_budget:
+            break
+        returned_rows = returned_rows[:-1]
+    if rows_before_guard and not returned_rows:
+        return (
+            "参数错误: 单条事件序列化后即超过输出上限；请调大 "
+            "ZABBIX_MAX_RESPONSE_CHARS 或缩小 limit 后重试"
+        )
+
+    if len(returned_rows) < rows_before_guard and returned_rows:
+        # 防护确实裁掉了行：明确还有更多数据，游标指向最后给出的行
+        has_more = True
+        next_cursor = str(int(returned_rows[-1]["eventid"]) - 1)
+
     prefix = _event_pagination_header(
         scanned,
         len(returned_rows),
@@ -687,7 +723,7 @@ def _history_get_impl(client, itemids, history=0, time_from=None, time_till=None
     time_till = parse_time_param(time_till, 0) if time_till else None
 
     # 入口护栏：单次返回条数上限，超过提示分段查询
-    if limit and (limit > HISTORY_MAX_LIMIT or limit < 0):
+    if limit is not None and (limit > HISTORY_MAX_LIMIT or limit <= 0):
         return (
             f"参数错误: limit 最大 {HISTORY_MAX_LIMIT}，请配合 time_from/time_till "
             "缩小时间范围或分批查询"
