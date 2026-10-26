@@ -92,6 +92,9 @@ A Model Context Protocol (MCP) server for Zabbix integration using FastMCP and p
 - `READ_ONLY` - Set to `true`, `1`, or `yes` to enable read-only mode (only GET operations allowed)
 - `VERIFY_SSL` - Enable/disable SSL certificate verification (default: `true`)
 - `ZABBIX_TEST_NETWORKS` - Comma-separated test network CIDRs (e.g., `192.168.100.0/24,192.168.101.0/24`) excluded by report tools when `production_only=true`; leave empty to disable
+- `ZABBIX_MAX_RESPONSE_CHARS` - Max characters per tool response (default: `50000`); oversized list results are truncated per entry (JSON stays valid) with an envelope and narrowing advice
+- `ZABBIX_DENY_TOOLS` - Comma-separated tool names removed at registration (invisible to models, e.g., `host_update`); leave empty to enable all tools
+- `ZABBIX_ALLOWED_IPS` - Comma-separated source IPs/CIDRs allowed on the HTTP transport (e.g., `127.0.0.1,192.168.0.0/16`); unmatched sources get `403`; leave empty to allow all (stdio is unaffected)
 
 ### Transport Configuration
 

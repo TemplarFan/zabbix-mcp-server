@@ -35,6 +35,9 @@ Replace these values in the `env` section:
 - `ZABBIX_URL`: Your Zabbix server API endpoint
 - `ZABBIX_TOKEN`: Your API token (or use ZABBIX_USER/ZABBIX_PASSWORD)
 - `READ_ONLY`: Set to "true" for read-only mode
+- `ZABBIX_MAX_RESPONSE_CHARS`: Max characters per tool response (optional, default `50000`)
+- `ZABBIX_DENY_TOOLS`: Comma-separated tool names to disable (optional, e.g., `host_update`)
+- `ZABBIX_ALLOWED_IPS`: Source IP/CIDR allowlist for the HTTP transport (optional, empty = allow all)
 
 ### Alternative Authentication
 
