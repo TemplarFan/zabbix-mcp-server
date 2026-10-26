@@ -140,6 +140,16 @@ def _item_get_impl(client, itemids=None, hostids=None, search=None, limit=None, 
     hostids = parse_list_param(hostids)
     limit_val = parse_int_param(limit) or 20
 
+    # 2.5 精确模式：显式 itemid 列表直达 API，不走语义搜索
+    itemid_list = parse_list_param(itemids)
+    if itemid_list:
+        result = client.item.get(
+            itemids=itemid_list,
+            output=["itemid", "name", "key_", "units", "lastvalue"],
+            limit=limit_val,
+        )
+        return format_response(result)
+
     # 3. 关键指标模式：智能筛选CPU/内存/磁盘等关键指标
     if key_metrics_only and hostids:
         # 获取该主机的所有活跃监控项（状态正常的）
