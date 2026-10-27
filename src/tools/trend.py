@@ -6,7 +6,7 @@ from typing import Annotated, Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 from client import get_zabbix_client
-from utils.params import parse_int_param, parse_list_param
+from utils.params import parse_int_param, parse_list_param, parse_time_param_strict
 from utils.format import format_response
 from ._analysis_common import BEIJING_TZ
 
@@ -70,8 +70,11 @@ class TrendSummaryErrorResponse(BaseModel):
 def _trend_get_impl(client, itemids, time_from=None, time_till=None, limit=24):
     itemids = parse_list_param(itemids)
     limit = parse_int_param(limit, 24)
-    time_from = parse_int_param(time_from)
-    time_till = parse_int_param(time_till)
+    try:
+        time_from = parse_time_param_strict(time_from, "time_from")
+        time_till = parse_time_param_strict(time_till, "time_till")
+    except ValueError as exc:
+        return f"参数错误: {exc}"
 
     # 入口护栏：条数与时间跨度上限，超过提示分段查询
     if limit is not None and (limit > TREND_MAX_LIMIT or limit <= 0):
@@ -99,7 +102,7 @@ def _trend_get_impl(client, itemids, time_from=None, time_till=None, limit=24):
 def trend_get(
     itemids: Annotated[Union[List[Any], str, int], Field(description="监控项ID（必填）")],
     time_from: Annotated[Union[int, str, None], Field(description="起始时间（支持相对时间如7d）")] = None,
-    time_till: Annotated[Union[int, str, None], Field(description="截止时间")] = None,
+    time_till: Annotated[Union[int, str, None], Field(description="截止时间（支持相对时间如7d）")] = None,
     limit: Annotated[Union[int, str, None], Field(description="返回条数（默认24）")] = 24
 ) -> str:
     """获取监控项趋势数据（每小时聚合）。摘要用trend_summary"""

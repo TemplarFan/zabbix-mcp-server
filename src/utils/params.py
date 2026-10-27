@@ -52,6 +52,23 @@ def parse_time_param(value: Any, default: int) -> int:
     return default
 
 
+def parse_time_param_strict(value: Any, name: str) -> Optional[int]:
+    """严格时间参数解析：None 不过滤；合法返回 Unix 时间戳；非法抛 ValueError。
+
+    合法格式与 parse_time_param 一致（Unix 时间戳、Nh/Nd 相对时间、yesterday）；
+    供需要"无效即报错"语义的工具使用，避免无效时间被静默丢弃后全量扫描。
+    """
+    if value is None:
+        return None
+    sentinel = object()
+    parsed = parse_time_param(value, sentinel)
+    if parsed is sentinel:
+        raise ValueError(
+            f"{name} 仅支持 Unix 时间戳或相对时间（如 24h、7d），收到: {value!r}"
+        )
+    return int(parsed)
+
+
 def parse_list_param(value: Union[List[Any], str, int, None]) -> Optional[List[str]]:
     """解析列表参数，支持多种输入格式（字符串、整数、列表）"""
     if value is None:

@@ -10,7 +10,7 @@ from pydantic import Field
 from client import get_zabbix_client
 from services.event_paginator import iter_eventid_pages
 from ._key_metrics import select_key_metrics
-from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param
+from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param_strict, parse_time_param
 from utils.format import UNTRUSTED_PREAMBLE, format_response, get_max_response_chars
 
 logger = logging.getLogger(__name__)
@@ -723,10 +723,12 @@ def _history_get_impl(client, itemids, history=0, time_from=None, time_till=None
     itemids = parse_list_param(itemids)
     history = parse_int_param(history)
     limit = parse_int_param(limit, 10)
-    # 使用 parse_time_param 支持相对时间（如 "1h", "24h"）
-    from utils.params import parse_time_param
-    time_from = parse_time_param(time_from, 0) if time_from else None
-    time_till = parse_time_param(time_till, 0) if time_till else None
+    # 严格解析：无效时间格式直接报参数错误，避免静默丢弃导致全量扫描
+    try:
+        time_from = parse_time_param_strict(time_from, "time_from")
+        time_till = parse_time_param_strict(time_till, "time_till")
+    except ValueError as exc:
+        return f"参数错误: {exc}"
 
     # 入口护栏：单次返回条数上限，超过提示分段查询
     if limit is not None and (limit > HISTORY_MAX_LIMIT or limit <= 0):
@@ -874,15 +876,18 @@ def _host_software_inventory_get_impl(client, host_identifier):
     # 识别主机标识类型并查询
     host = None
 
-    # 1. 尝试作为 hostid（纯数字）
+    # 1. 尝试作为 hostid（纯数字）；失败仅记日志并继续后续回退
     if host_identifier.isdigit():
-        result = client.host.get(
-            hostids=[host_identifier],
-            output=["hostid", "host", "name"],
-            selectInventory=software_fields
-        )
-        if result:
-            host = result[0]
+        try:
+            result = client.host.get(
+                hostids=[host_identifier],
+                output=["hostid", "host", "name"],
+                selectInventory=software_fields
+            )
+            if result:
+                host = result[0]
+        except Exception as exc:
+            logging.warning("host.get 按 hostid=%s 查询失败: %s", host_identifier, exc)
 
     # 2. 尝试作为 IP 地址查询
     if not host:
@@ -901,29 +906,35 @@ def _host_software_inventory_get_impl(client, host_identifier):
                 if result:
                     host = result[0]
         except Exception as exc:
-            logging.warning("host.get 按 hostid=%s 查询失败: %s", hostid, exc)
+            logging.warning("host.get 按 IP=%s 查询失败: %s", host_identifier, exc)
 
     # 3. 尝试作为主机名精确匹配
     if not host:
-        result = client.host.get(
-            output=["hostid", "host", "name"],
-            selectInventory=software_fields,
-            filter={"name": host_identifier}
-        )
-        if result:
-            host = result[0]
+        try:
+            result = client.host.get(
+                output=["hostid", "host", "name"],
+                selectInventory=software_fields,
+                filter={"name": host_identifier}
+            )
+            if result:
+                host = result[0]
+        except Exception as exc:
+            logging.warning("host.get 按名称=%s 精确匹配失败: %s", host_identifier, exc)
 
     # 4. 尝试作为主机名模糊匹配
     if not host:
-        result = client.host.get(
-            output=["hostid", "host", "name"],
-            selectInventory=software_fields,
-            search={"name": f"*{host_identifier}*"},
-            searchWildcardsEnabled=True,
-            limit=1
-        )
-        if result:
-            host = result[0]
+        try:
+            result = client.host.get(
+                output=["hostid", "host", "name"],
+                selectInventory=software_fields,
+                search={"name": f"*{host_identifier}*"},
+                searchWildcardsEnabled=True,
+                limit=1
+            )
+            if result:
+                host = result[0]
+        except Exception as exc:
+            logging.warning("host.get 按名称=%s 模糊匹配失败: %s", host_identifier, exc)
 
     if not host:
         return f"未找到主机：{host_identifier}"
