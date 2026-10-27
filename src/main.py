@@ -24,7 +24,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP
-mcp = FastMCP("Zabbix MCP Server")
+# 显式声明服务版本：不传时框架会回退上报底层 mcp SDK 版本，与 pyproject 不一致
+try:
+    from importlib.metadata import version as _package_version
+
+    _SERVER_VERSION = _package_version("zabbix-mcp-server")
+except Exception:
+    _SERVER_VERSION = "1.1.0"
+
+mcp = FastMCP("Zabbix MCP Server", version=_SERVER_VERSION)
 
 # Import and register tools
 from tools import (

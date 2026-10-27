@@ -143,9 +143,15 @@ def _item_get_impl(client, itemids=None, hostids=None, search=None, limit=None, 
     # 2.5 精确模式：显式 itemid 列表直达 API，不走语义搜索
     itemid_list = parse_list_param(itemids)
     if itemid_list:
+        requested_output = output
+        if isinstance(requested_output, str):
+            try:
+                requested_output = json.loads(requested_output)
+            except ValueError:
+                requested_output = [requested_output]
         result = client.item.get(
             itemids=itemid_list,
-            output=["itemid", "name", "key_", "units", "lastvalue"],
+            output=requested_output or ["itemid", "name", "key_", "units", "lastvalue"],
             limit=limit_val,
         )
         return format_response(result)
