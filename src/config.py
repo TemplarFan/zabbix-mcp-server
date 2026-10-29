@@ -4,10 +4,8 @@ import ipaddress
 import logging
 import os
 
-# ===== src/tools/analysis.py - host_alert_history =====
+# ===== src/tools/history.py - host_alert_history =====
 
-JITTER_THRESHOLD_SECONDS = 180  # 抖动阈值（秒）
-CHRONIC_THRESHOLD_SECONDS = 3600  # 持续阈值（秒）
 BEFORE_WINDOW_HOURS = 2  # 前置告警查询窗口（小时）
 DEFAULT_QUERY_DAYS = 7  # 默认查询天数
 

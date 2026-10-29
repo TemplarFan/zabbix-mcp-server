@@ -89,20 +89,6 @@ def validate_read_only() -> None:
         raise ValueError("Server is in read-only mode - write operations are not allowed")
 
 
-def get_zabbix_version() -> Optional[str]:
-    """Get the Zabbix server version.
-
-    Returns:
-        str: Zabbix version string or None if not connected
-    """
-    try:
-        client = get_zabbix_client()
-        # Zabbix API doesn't have a direct version endpoint, but we can get it from the API info
-        return "7.0.x"  # Placeholder, could be retrieved from API if needed
-    except Exception:
-        return None
-
-
 def get_transport_config() -> dict:
     """Get transport configuration from environment.
 

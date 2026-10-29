@@ -21,34 +21,6 @@ EVENT_QUERY_PAGE_SIZE = 1000
 HISTORY_MAX_LIMIT = 500
 
 
-def _format_events_as_table(events: list) -> str:
-    """Format events list as markdown table for better display."""
-    if not events:
-        return "暂无事件数据"
-
-    lines = ["| 时间 | 主机 | 问题 | 级别 |", "|------|------|------|------|"]
-
-    severity_names = {"0": "未分类", "1": "信息", "2": "警告", "3": "一般", "4": "严重", "5": "灾难"}
-
-    for event in events:
-        clock = event.get("clock", 0)
-        try:
-            time_str = datetime.fromtimestamp(int(clock), tz=BEIJING_TZ).strftime("%m-%d %H:%M")
-        except (TypeError, ValueError, OSError, OverflowError):
-            time_str = str(clock)
-
-        hosts = event.get("hosts", [{}])
-        host_name = hosts[0].get("name", "Unknown") if hosts else "Unknown"
-
-        name = event.get("name", "Unknown")
-        severity = str(event.get("severity", "0"))
-        sev_name = severity_names.get(severity, severity)
-
-        lines.append(f"| {time_str} | {host_name} | {name} | {sev_name} |")
-
-    return "\n".join(lines)
-
-
 def _host_get_impl(client, hostids=None, name=None, groupids=None, templateids=None, output=None, search=None, filter=None, selectGroups=False, selectInventory=False, limit=10):
     """查询主机列表。支持ID精确查询或名称模糊匹配，已知IP时优先用get_host_by_ip"""
 
