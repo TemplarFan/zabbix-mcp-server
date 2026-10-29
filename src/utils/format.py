@@ -2,11 +2,9 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone, timedelta
-from typing import Any, List, Dict, Optional, Union
+from typing import Any, List, Union
 
 # 定义北京时区 (UTC+8)
-BEIJING_TZ = timezone(timedelta(hours=8))
 
 # ===== 输出防护 =====
 # 防提示注入前言：Zabbix 数据中的主机名/问题描述等来自开放来源，声明其为数据而非指令。

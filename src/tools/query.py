@@ -2,7 +2,6 @@
 import json
 import logging
 import time
-from datetime import datetime, timezone, timedelta
 from typing import Annotated, Any, Dict, List, Optional, Union
 
 from pydantic import Field
@@ -16,7 +15,6 @@ from utils.format import UNTRUSTED_PREAMBLE, format_response, get_max_response_c
 logger = logging.getLogger(__name__)
 
 # 定义北京时区 (UTC+8)
-BEIJING_TZ = timezone(timedelta(hours=8))
 EVENT_QUERY_PAGE_SIZE = 1000
 HISTORY_MAX_LIMIT = 500
 
