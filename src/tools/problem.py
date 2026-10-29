@@ -1,5 +1,4 @@
 """问题摘要与问题事实明细工具：统一分类视图与单事件全量事实。"""
-import re
 import time
 from datetime import datetime
 from typing import Annotated, List, Optional, Union
@@ -286,7 +285,14 @@ def _render_problem_fact_detail(fact: ProblemFact) -> str:
         f"- 主动 Agent 可用性: {fact.host_active_available if fact.host_active_available is not None else '未知'}",
         f"- 触发器状态: {fact.trigger_status if fact.trigger_status is not None else '未知'}",
         f"- 触发器运行状态: {fact.trigger_state if fact.trigger_state is not None else '未知'}",
-        f"- 关联监控项数: {len(fact.items)}",
+        f"- 关联监控项: {len(fact.items)} 个",
+    ])
+    for item in fact.items:
+        status_label = "已启用" if str(item.get("status", "1")) == "0" else "已停用"
+        lines.append(
+            f"  - itemid={item.get('itemid')} key_={item.get('key_', '未知')}（{status_label}）"
+        )
+    lines.extend([
         f"- 关联接口数: {len(fact.interfaces)}",
         "",
         f"**结论: {conclusion}**",

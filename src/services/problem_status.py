@@ -152,7 +152,7 @@ def _fetch_triggers(client: Any, triggerids: Sequence[str]) -> Dict[str, Dict[st
             triggerids=batch,
             output=["triggerid", "description", "status", "state"],
             expandDescription=True,
-            selectItems=["itemid", "status", "state", "type", "interfaceid"],
+            selectItems=["itemid", "name", "key_", "status", "state", "type", "interfaceid"],
             selectHosts=["hostid", "name"],
         )
         for row in rows:

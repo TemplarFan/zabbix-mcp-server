@@ -10,7 +10,7 @@ from pydantic import Field
 from client import get_zabbix_client
 from services.event_paginator import iter_eventid_pages
 from ._key_metrics import select_key_metrics
-from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param_strict, parse_time_param
+from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param_strict
 from utils.format import UNTRUSTED_PREAMBLE, format_response, get_max_response_chars
 
 logger = logging.getLogger(__name__)
@@ -420,7 +420,23 @@ def _item_get_impl(client, itemids=None, hostids=None, search=None, limit=None, 
             return hint
 
     if not result:
-        return f"未找到匹配项。搜索参数: {search}。请尝试更具体的关键词，或直接使用 `key_metrics_only=true` 获取关键性能指标。"
+        host_total_line = ""
+        if hostids:
+            try:
+                host_total = client.item.get(hostids=hostids, countOutput=True)
+                host_total_line = f"- 该主机监控项总数: {host_total}\n"
+            except Exception as exc:
+                logging.warning("统计主机监控项总数失败: %s", exc)
+        header = (
+            "/* 空结果证据（不要展示给用户）：\n"
+            f"- 已尝试: 名称/关键字搜索（search={search}）\n"
+            + host_total_line +
+            "- 总数较大而 0 命中，多为搜索词与英文监控项名不匹配\n"
+            "- 建议: 换英文关键词重试；或 trigger_get（默认带关联监控项）经触发器定位；"
+            "或用已知同类 key_ 前缀搜索取相关监控项\n"
+            "*/\n\n"
+        )
+        return header + format_response(result)
 
     return format_response(result)
 
@@ -437,7 +453,7 @@ def item_get(
     return _item_get_impl(get_zabbix_client(), itemids, hostids, search, limit, output, key_metrics_only)
 
 
-def _trigger_get_impl(client, triggerids=None, hostids=None, groupids=None, templateids=None, priority=None, output=None, search=None, filter=None, limit=20, include_expression=False):
+def _trigger_get_impl(client, triggerids=None, hostids=None, groupids=None, templateids=None, priority=None, output=None, search=None, filter=None, limit=20, include_expression=False, include_items=True):
     """查询触发器列表。priority=3,4,5只看严重以上级别"""
 
     # Parse parameters
@@ -472,6 +488,8 @@ def _trigger_get_impl(client, triggerids=None, hostids=None, groupids=None, temp
             output.append("expression")
 
     params = {"output": output, "limit": limit}
+    if include_items:
+        params["selectItems"] = ["itemid", "name", "key_"]
 
     if triggerids:
         params["triggerids"] = triggerids
@@ -502,10 +520,11 @@ def trigger_get(
     search: Annotated[Union[Dict[str, str], str, None], Field(description="搜索条件")] = None,
     filter: Annotated[Union[Dict[str, Any], str, None], Field(description="精确过滤条件")] = None,
     limit: Annotated[Union[int, str, None], Field(description="返回数量（默认20）")] = 20,
-    include_expression: Annotated[bool, Field(description="是否返回触发表达式（默认False节省Token）")] = False
+    include_expression: Annotated[bool, Field(description="是否返回触发表达式（默认False节省Token）")] = False,
+    include_items: Annotated[bool, Field(description="是否带出触发器关联的监控项（itemid/name/key_，默认True）")] = True
 ) -> str:
-    """查询触发器列表。priority=3,4,5只看严重以上级别"""
-    return _trigger_get_impl(get_zabbix_client(), triggerids, hostids, groupids, templateids, priority, output, search, filter, limit, include_expression)
+    """查询触发器列表。priority=3,4,5只看严重以上级别；经触发器可精确定位其监控项"""
+    return _trigger_get_impl(get_zabbix_client(), triggerids, hostids, groupids, templateids, priority, output, search, filter, limit, include_expression, include_items)
 
 
 def _event_pagination_header(
