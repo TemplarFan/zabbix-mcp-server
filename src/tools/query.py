@@ -508,15 +508,6 @@ def trigger_get(
     return _trigger_get_impl(get_zabbix_client(), triggerids, hostids, groupids, templateids, priority, output, search, filter, limit, include_expression)
 
 
-def _parse_event_time_parameter(name: str, value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    parsed = parse_time_param(value, None)
-    if parsed is None:
-        raise ValueError(f"{name} 格式无效")
-    return parsed
-
-
 def _event_pagination_header(
     scanned: int,
     returned: int,
@@ -558,8 +549,8 @@ def _event_get_impl(client, eventids=None, groupids=None, hostids=None, objectid
             return "参数错误: eventid_till 必须是非负整数"
 
     try:
-        parsed_time_from = _parse_event_time_parameter("time_from", time_from)
-        parsed_time_till = _parse_event_time_parameter("time_till", time_till)
+        parsed_time_from = parse_time_param_strict(time_from, "time_from")
+        parsed_time_till = parse_time_param_strict(time_till, "time_till")
     except ValueError as exc:
         return f"参数错误: {exc}"
     if (

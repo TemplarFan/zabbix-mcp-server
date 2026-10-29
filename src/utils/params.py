@@ -18,10 +18,11 @@ def parse_int_param(value: Any, default: Optional[int] = None) -> Optional[int]:
         return default
 
 
-def parse_time_param(value: Any, default: int) -> int:
+def parse_time_param(value: Any, default: int, reference: Optional[int] = None) -> int:
     """
     将模型传来的值转换为Unix时间戳。
-    支持：纯数字字符串、整数、以及相对时间描述（如 '1d', '24h', '1h'）
+    支持：纯数字字符串、整数、以及相对时间描述（如 '1d', '24h', '1h'）。
+    reference 提供时相对时间基于该基准计算（供冻结分析时间的调用方使用）。
     """
     if value is None:
         return default
@@ -33,7 +34,11 @@ def parse_time_param(value: Any, default: int) -> int:
     # 处理语义化字符串 (例如: "24h", "1d", "7d")
     if isinstance(value, str):
         value = value.lower().strip()
-        now = datetime.now(BEIJING_TZ)
+        now = (
+            datetime.fromtimestamp(reference, BEIJING_TZ)
+            if reference is not None
+            else datetime.now(BEIJING_TZ)
+        )
 
         # 使用正则匹配：数字 + 单位
         match = re.match(r"(\d+)([hd])", value)
@@ -52,7 +57,7 @@ def parse_time_param(value: Any, default: int) -> int:
     return default
 
 
-def parse_time_param_strict(value: Any, name: str) -> Optional[int]:
+def parse_time_param_strict(value: Any, name: str, reference: Optional[int] = None) -> Optional[int]:
     """严格时间参数解析：None 不过滤；合法返回 Unix 时间戳；非法抛 ValueError。
 
     合法格式与 parse_time_param 一致（Unix 时间戳、Nh/Nd 相对时间、yesterday）；
@@ -61,7 +66,7 @@ def parse_time_param_strict(value: Any, name: str) -> Optional[int]:
     if value is None:
         return None
     sentinel = object()
-    parsed = parse_time_param(value, sentinel)
+    parsed = parse_time_param(value, sentinel, reference=reference)
     if parsed is sentinel:
         raise ValueError(
             f"{name} 仅支持 Unix 时间戳或相对时间（如 24h、7d），收到: {value!r}"

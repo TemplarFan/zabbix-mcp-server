@@ -7,7 +7,7 @@ from typing import Annotated, List, Optional, Union
 from pydantic import Field
 
 from client import get_zabbix_client
-from utils.params import parse_int_param, parse_list_param
+from utils.params import parse_int_param, parse_list_param, parse_time_param_strict
 from utils.format import guard_text
 from services.problem_status import (
     AttentionStatus,
@@ -119,19 +119,9 @@ def _render_problem_summary(
 
 
 def _parse_problem_time_range(value: Optional[str], analysis_clock: int) -> Optional[int]:
-    if value is None:
-        return None
-    normalized = str(value).strip().lower()
-    if normalized.isdigit():
-        time_from = int(normalized)
-    else:
-        match = re.fullmatch(r"(\d+)([hd])", normalized)
-        if match is None:
-            raise ValueError("time_range 仅支持 Unix 时间戳或 Nh/Nd，例如 24h、7d")
-        amount = int(match.group(1))
-        seconds = amount * (3600 if match.group(2) == "h" else 86400)
-        time_from = analysis_clock - seconds
-    if time_from > analysis_clock:
+    """统一时间解析（见 utils.params.parse_time_param_strict）+ 业务校验。"""
+    time_from = parse_time_param_strict(value, "time_range", reference=analysis_clock)
+    if time_from is not None and time_from > analysis_clock:
         raise ValueError("time_range 的开始时间不能晚于当前分析时间")
     return time_from
 
