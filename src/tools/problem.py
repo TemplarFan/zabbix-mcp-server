@@ -231,6 +231,11 @@ def _render_problem_fact_detail(fact: ProblemFact) -> str:
         f"- 主机: {fact.host_name}",
         f"- 主机ID: {fact.hostid or '无法归属'}",
         f"- 触发器ID: {fact.triggerid or '缺失'}",
+        f"- 阈值表达式: {fact.trigger_expression or '无法获取（触发器缺失或不可见）'}",
+    ]
+    if fact.trigger_recovery_expression:
+        lines.append(f"- 恢复表达式: {fact.trigger_recovery_expression}")
+    lines.extend([
         f"- 严重级别: {fact.severity}",
         f"- 发生时间: {_format_problem_fact_time(fact.start_clock)}",
         "",
@@ -256,7 +261,7 @@ def _render_problem_fact_detail(fact: ProblemFact) -> str:
         "",
         "### 人工处置时间线",
         "",
-    ]
+    ])
     if fact.action_history:
         for update in sorted(
             fact.action_history,

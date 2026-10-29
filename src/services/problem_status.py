@@ -150,8 +150,9 @@ def _fetch_triggers(client: Any, triggerids: Sequence[str]) -> Dict[str, Dict[st
     for batch in _chunks(ordered):
         rows = client.trigger.get(
             triggerids=batch,
-            output=["triggerid", "description", "status", "state"],
+            output=["triggerid", "description", "status", "state", "expression", "recovery_expression"],
             expandDescription=True,
+            expandExpression=True,
             selectItems=["itemid", "name", "key_", "status", "state", "type", "interfaceid"],
             selectHosts=["hostid", "name"],
         )
@@ -302,6 +303,8 @@ class ProblemFact:
     host_active_available: Optional[str] = None
     trigger_status: Optional[str] = None
     trigger_state: Optional[str] = None
+    trigger_expression: str = ""
+    trigger_recovery_expression: str = ""
     items: List[Dict[str, Any]] = field(default_factory=list)
     interfaces: List[Dict[str, Any]] = field(default_factory=list)
     action_history: List[Dict[str, Any]] = field(default_factory=list)
@@ -491,6 +494,8 @@ def _analyze_problem_rows(
                 str(trigger.get("status")) if trigger is not None else None
             ),
             trigger_state=str(trigger.get("state")) if trigger is not None else None,
+            trigger_expression=str((trigger or {}).get("expression") or ""),
+            trigger_recovery_expression=str((trigger or {}).get("recovery_expression") or ""),
             items=[dict(item) for item in ((trigger or {}).get("items") or [])],
             interfaces=[dict(item) for item in ((host or {}).get("interfaces") or [])],
             action_history=[dict(item) for item in updates],

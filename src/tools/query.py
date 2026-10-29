@@ -455,9 +455,12 @@ def _trigger_get_impl(client, triggerids=None, hostids=None, groupids=None, temp
         output = ["triggerid", "description", "priority", "status", "state",
                   "value", "lastchange", "error"]
         if include_expression:
-            output.append("expression")
+            output.extend(["expression", "recovery_expression"])
 
     params = {"output": output, "limit": limit}
+    if include_expression or "expression" in output:
+        # 展开表达式中的 functionid 和用户宏，否则返回 {id}>{$宏名} 形式读不出阈值
+        params["expandExpression"] = True
     if include_items:
         params["selectItems"] = ["itemid", "name", "key_"]
 
@@ -490,7 +493,7 @@ def trigger_get(
     search: Annotated[Union[Dict[str, str], str, None], Field(description="搜索条件")] = None,
     filter: Annotated[Union[Dict[str, Any], str, None], Field(description="精确过滤条件")] = None,
     limit: Annotated[Union[int, str, None], Field(description="返回数量（默认20）")] = 20,
-    include_expression: Annotated[bool, Field(description="是否返回触发表达式（默认False节省Token）")] = False,
+    include_expression: Annotated[bool, Field(description="是否返回触发表达式（宏已展开，可直接读出阈值；默认False节省Token）")] = False,
     include_items: Annotated[bool, Field(description="是否带出触发器关联的监控项（itemid/name/key_，默认True）")] = True
 ) -> str:
     """查询触发器列表。priority=3,4,5只看严重以上级别；经触发器可精确定位其监控项"""
