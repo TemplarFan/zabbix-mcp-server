@@ -87,7 +87,7 @@ def _interface_availability(
     return "未知"
 
 
-def _check_host_health_impl(client, host_identifier, time_range="24h", include_trends=False, trend_hours=24, include_oracle=False):
+def _check_host_health_impl(client, host_identifier, time_range="24h"):
     """按主机查询接口可用性、统一当前问题分类和关键指标。"""
     now = int(time.time())
     try:
@@ -224,14 +224,9 @@ def _check_host_health_impl(client, host_identifier, time_range="24h", include_t
 def check_host_health(
     host_identifier: Annotated[str, Field(description="主机标识（IP/主机名/hostid）")],
     time_range: Annotated[str, Field(description="告警时间范围（默认24h）")] = "24h",
-    include_trends: Annotated[bool, Field(description="是否包含趋势数据")] = False,
-    trend_hours: Annotated[int, Field(description="趋势数据查询时长")] = 24,
-    include_oracle: Annotated[bool, Field(description="是否查询Oracle相关指标")] = False
 ) -> str:
-    """按主机查询接口可用性、统一当前问题分类和关键指标。"""
-    return _check_host_health_impl(
-        get_zabbix_client(), host_identifier, time_range, include_trends, trend_hours, include_oracle,
-    )
+    """按主机查询接口可用性、统一当前问题分类和关键指标。趋势分析用 check_host_health → item_get(key_metrics_only) → trend_summary 组合。"""
+    return _check_host_health_impl(get_zabbix_client(), host_identifier, time_range)
 
 
 def _fetch_eventid_pages(
