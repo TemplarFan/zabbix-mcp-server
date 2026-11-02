@@ -10,7 +10,7 @@ from client import get_zabbix_client
 from services.event_paginator import iter_eventid_pages
 from ._key_metrics import select_key_metrics
 from utils.params import parse_int_param, parse_list_param, parse_dict_param, parse_time_param_strict
-from utils.format import UNTRUSTED_PREAMBLE, format_response, get_max_response_chars
+from utils.format import UNTRUSTED_PREAMBLE, format_response, get_max_response_chars, shrink_list_to_budget
 
 logger = logging.getLogger(__name__)
 
@@ -500,6 +500,34 @@ def trigger_get(
     return _trigger_get_impl(get_zabbix_client(), triggerids, hostids, groupids, templateids, priority, output, search, filter, limit, include_expression, include_items)
 
 
+def _template_get_impl(client, templateids=None, search=None, limit=20, include_hosts=False):
+    """查询模板。templateid 是 host_get templateids 筛选的唯一发现途径。"""
+    templateids = parse_list_param(templateids)
+    search = parse_dict_param(search)
+    limit = parse_int_param(limit) or 20
+
+    params = {"output": ["templateid", "name"], "limit": limit}
+    if include_hosts:
+        params["selectHosts"] = ["hostid", "name"]
+    if templateids:
+        params["templateids"] = templateids
+    if search:
+        params["search"] = search
+
+    result = client.template.get(**params)
+    return format_response(result)
+
+
+def template_get(
+    templateids: Annotated[Union[List[Any], str, int, None], Field(description="模板ID（精确查询）")] = None,
+    search: Annotated[Union[Dict[str, str], str, None], Field(description="搜索条件（如按 name 模糊匹配）")] = None,
+    limit: Annotated[Union[int, str, None], Field(description="返回数量（默认20）")] = 20,
+    include_hosts: Annotated[bool, Field(description="是否带出应用该模板的主机（hostid/name，默认False）")] = False,
+) -> str:
+    """查询模板列表。拿到 templateid 后可用 host_get 的 templateids 参数筛选应用该模板的主机"""
+    return _template_get_impl(get_zabbix_client(), templateids, search, limit, include_hosts)
+
+
 def _event_pagination_header(
     scanned: int,
     returned: int,
@@ -648,15 +676,8 @@ def _event_get_impl(client, eventids=None, groupids=None, hostids=None, objectid
             "参数错误: 输出上限配置过小，单条事件也放不下；"
             "请调大 ZABBIX_MAX_RESPONSE_CHARS 或缩小 limit"
         )
-    while returned_rows:
-        body = json.dumps(returned_rows, ensure_ascii=False, indent=2)
-        if len(body) <= guard_budget:
-            break
-        # 比例估算快速收缩，再逐行微调
-        returned_rows = returned_rows[:max(1, int(len(returned_rows) * guard_budget / len(body)))]
-        if len(json.dumps(returned_rows, ensure_ascii=False, indent=2)) <= guard_budget:
-            break
-        returned_rows = returned_rows[:-1]
+    # 比例收缩与输出护栏共用 shrink_list_to_budget，防止两份算法漂移导致头部谎报行数
+    returned_rows = returned_rows[:shrink_list_to_budget(returned_rows, lambda _k: guard_budget)]
     if rows_before_guard and not returned_rows:
         return (
             "参数错误: 单条事件序列化后即超过输出上限；请调大 "
@@ -860,6 +881,8 @@ def _host_software_inventory_get_impl(client, host_identifier):
     host = None
 
     # 1. 尝试作为 hostid（纯数字）；失败仅记日志并继续后续回退
+    # 终点语义：四路全空且无异常 → 未找到；曾有 API 异常 → 查询失败（不把失败伪装成未找到）
+    query_errors = []
     if host_identifier.isdigit():
         try:
             result = client.host.get(
@@ -870,6 +893,7 @@ def _host_software_inventory_get_impl(client, host_identifier):
             if result:
                 host = result[0]
         except Exception as exc:
+            query_errors.append(f"按 hostid 查询: {exc}")
             logging.warning("host.get 按 hostid=%s 查询失败: %s", host_identifier, exc)
 
     # 2. 尝试作为 IP 地址查询
@@ -889,6 +913,7 @@ def _host_software_inventory_get_impl(client, host_identifier):
                 if result:
                     host = result[0]
         except Exception as exc:
+            query_errors.append(f"按 IP 查询: {exc}")
             logging.warning("host.get 按 IP=%s 查询失败: %s", host_identifier, exc)
 
     # 3. 尝试作为主机名精确匹配
@@ -902,6 +927,7 @@ def _host_software_inventory_get_impl(client, host_identifier):
             if result:
                 host = result[0]
         except Exception as exc:
+            query_errors.append(f"按名称精确匹配: {exc}")
             logging.warning("host.get 按名称=%s 精确匹配失败: %s", host_identifier, exc)
 
     # 4. 尝试作为主机名模糊匹配
@@ -917,9 +943,15 @@ def _host_software_inventory_get_impl(client, host_identifier):
             if result:
                 host = result[0]
         except Exception as exc:
+            query_errors.append(f"按名称模糊匹配: {exc}")
             logging.warning("host.get 按名称=%s 模糊匹配失败: %s", host_identifier, exc)
 
     if not host:
+        if query_errors:
+            return (
+                f"查询主机失败: {host_identifier}（解析路径存在 API 异常，首个: "
+                f"{query_errors[0]}；不能确认为未找到）"
+            )
         return f"未找到主机：{host_identifier}"
 
     # 提取信息

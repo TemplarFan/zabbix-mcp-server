@@ -46,6 +46,7 @@ from tools import (
     item_get,
     # Trigger tools
     trigger_get,
+    template_get,
     # Event tools
     event_get,
     # History tools
@@ -97,6 +98,7 @@ _register(item_get)
 
 # Register trigger tools
 _register(trigger_get)
+_register(template_get)
 
 # Register event tools
 _register(event_get)

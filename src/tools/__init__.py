@@ -1,6 +1,6 @@
 """Tools package - MCP tool definitions organized by category."""
 # Query tools (基础查询)
-from .query import host_get, hostgroup_get, hostgroup_get_hosts, host_software_inventory_get, item_get, trigger_get, event_get, history_get
+from .query import host_get, hostgroup_get, hostgroup_get_hosts, host_software_inventory_get, item_get, trigger_get, template_get, event_get, history_get
 
 # Update tools (管理操作)
 from .update import host_update
@@ -25,6 +25,7 @@ __all__ = [
     "host_software_inventory_get",
     "item_get",
     "trigger_get",
+    "template_get",
     "event_get",
     "history_get",
     # Update tools

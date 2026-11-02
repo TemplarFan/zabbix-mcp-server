@@ -2,7 +2,7 @@
 import json
 import logging
 import os
-from typing import Any, List, Union
+from typing import Any, Callable, List, Optional, Union
 
 # 定义北京时区 (UTC+8)
 
@@ -111,6 +111,28 @@ def format_duration(seconds: Union[int, float, None]) -> str:
     return "".join(parts)
 
 
+def shrink_list_to_budget(items: List[Any], budget: Callable[[int], int], start: Optional[int] = None) -> int:
+    """求最大前缀条数 k，使序列化 items[:k] 的长度不超过 budget(k)。
+
+    预算允许是 k 的函数（截断信封含"已返回 k 条"时，k 的位数会影响预算）。
+    start 可传入自定义比例起点（默认按 budget(len(items)) 估算）；起点只影响
+    收敛速度与保守性，从起点向下逐条校验，返回 0 表示单条也放不下或列表为空。
+    这是输出护栏与分页预收缩共用的唯一算法，两处漂移会导致分页头谎报行数。
+    """
+    if not items:
+        return 0
+    if start is None:
+        full_len = len(json.dumps(items, ensure_ascii=False, indent=2))
+        start = int(len(items) * budget(len(items)) / max(full_len, 1))
+    keep = max(1, min(len(items), start))
+    while keep > 0:
+        body = json.dumps(items[:keep], ensure_ascii=False, indent=2)
+        if len(body) <= budget(keep):
+            return keep
+        keep -= 1
+    return 0
+
+
 def format_response(data: Any) -> str:
     """序列化为 JSON 并套输出防护：前言 + 超限时列表按条目截断保持 JSON 合法。"""
     text = json.dumps(data, ensure_ascii=False, indent=2)
@@ -119,25 +141,27 @@ def format_response(data: Any) -> str:
         return f"{UNTRUSTED_PREAMBLE}\n{text}"
 
     if isinstance(data, list):
-        # 比例估算起点，向下逐条收缩：每轮用"终版信封"（含已返回条数）重算预算，保证总长不超限
-        keep = max(1, int(len(data) * limit / max(len(text) + 100, 1)))
-        while keep > 0:
-            envelope = _envelope_block([
-                f"结果超限已按条目截断: 原始 {len(data)} 条，已返回 {keep} 条",
+        def truncation_envelope(kept: int) -> str:
+            return _envelope_block([
+                f"结果超限已按条目截断: 原始 {len(data)} 条，已返回 {kept} 条",
                 f"建议: {_DEFAULT_NARROWING_HINT}",
             ])
-            head_room = limit - len(UNTRUSTED_PREAMBLE) - 1 - len(envelope) - 2
-            body = json.dumps(data[:keep], ensure_ascii=False, indent=2)
-            if len(body) <= head_room:
-                break
-            keep -= 1
+
+        def head_room(keep: int) -> int:
+            # 每轮用"终版信封"（含已返回条数）重算预算，保证总长不超限
+            return limit - len(UNTRUSTED_PREAMBLE) - 1 - len(truncation_envelope(keep)) - 2
+
+        # start 沿用收敛前的历史起点公式，保证与旧算法逐输入等价
+        start = max(1, int(len(data) * limit / max(len(text) + 100, 1)))
+        keep = shrink_list_to_budget(data, head_room, start=start)
         if keep <= 0:
             envelope = _envelope_block([
                 f"结果超限且单条即超上限: 原始 {len(data)} 条，已返回 0 条",
                 f"建议: {_DEFAULT_NARROWING_HINT}",
             ])
             return f"{UNTRUSTED_PREAMBLE}\n\n{envelope}"
-        return f"{UNTRUSTED_PREAMBLE}\n{body}\n\n{envelope}"
+        body = json.dumps(data[:keep], ensure_ascii=False, indent=2)
+        return f"{UNTRUSTED_PREAMBLE}\n{body}\n\n{truncation_envelope(keep)}"
 
     # 非列表：行边界截断 + 信封
     envelope = _envelope_block([
