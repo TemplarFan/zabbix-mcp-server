@@ -12,6 +12,8 @@ from services.problem_status import (
     ProblemFact,
     analyze_problem_events,
 )
+from utils.format import format_response
+from utils.params import parse_int_param, parse_list_param, parse_time_param_strict
 from ._analysis_common import (
     BEIJING_TZ,
     DISPOSITION_STATUS_LABELS,
@@ -19,6 +21,10 @@ from ._analysis_common import (
     PROBLEM_REASON_LABELS,
     QUICK_STATUS_PAGE_SIZE,
 )
+
+
+# history_get 与 event_get 共用的返回条数上限（event.py 跨模块引用）
+HISTORY_MAX_LIMIT = 500
 
 
 def _fetch_eventid_pages(
@@ -317,3 +323,70 @@ def host_alert_history(
 ) -> HostAlertHistoryResult:
     """查询完整分页、精确恢复配对的主机与触发器告警历史。"""
     return _host_alert_history_impl(get_zabbix_client(), hostid, triggerid, days)
+
+
+def _history_get_impl(client, itemids, history=0, time_from=None, time_till=None, limit=None, sortfield="clock", sortorder="DESC"):
+    """获取监控项原始历史数据。长期趋势用trend_get"""
+    # Parse parameters
+    itemids = parse_list_param(itemids)
+    history = parse_int_param(history)
+    limit = parse_int_param(limit, 10)
+    # 严格解析：无效时间格式直接报参数错误，避免静默丢弃导致全量扫描
+    try:
+        time_from = parse_time_param_strict(time_from, "time_from")
+        time_till = parse_time_param_strict(time_till, "time_till")
+    except ValueError as exc:
+        return f"参数错误: {exc}"
+
+    # 入口护栏：单次返回条数上限，超过提示分段查询
+    if limit is not None and (limit > HISTORY_MAX_LIMIT or limit <= 0):
+        return (
+            f"参数错误: limit 最大 {HISTORY_MAX_LIMIT}，请配合 time_from/time_till "
+            "缩小时间范围或分批查询"
+        )
+
+    # 时间戳合理性检查：如果 time_from 是过去超过7天的时间戳，提示使用相对时间
+    current_time = int(time.time())
+    if time_from and (current_time - time_from) > (7 * 24 * 3600):
+        return "错误：time_from 时间戳太老（超过7天前），可能是手动计算错误。\n" \
+               "请使用相对时间格式：time_from='2h'（最近2小时）、time_from='24h'（最近24小时）、time_from='7d'（最近7天）\n" \
+               "系统会自动计算正确的时间戳。"
+
+    # 无时间下限时默认最近24小时，避免全量拉取
+    default_window = False
+    if time_from is None:
+        time_from = current_time - 86400
+        default_window = True
+
+    params = {
+        "itemids": itemids,
+        "history": history,
+        "sortfield": sortfield,
+        "sortorder": sortorder
+    }
+
+    if time_from:
+        params["time_from"] = time_from
+    if time_till:
+        params["time_till"] = time_till
+    if limit:
+        params["limit"] = limit
+
+    result = client.history.get(**params)
+    output = format_response(result)
+    if default_window:
+        output += "\n/* 注: 未指定 time_from，默认查询最近24小时；需要更长范围请显式传入 */\n"
+    return output
+
+
+def history_get(
+    itemids: Annotated[Union[List[Any], str, int], Field(description="监控项ID（必填）")],
+    history: Annotated[Union[int, str], Field(description="数据类型（0float/1char/2log/3uint/4text）")] = 0,
+    time_from: Annotated[Union[int, str, None], Field(description="起始时间（支持相对时间如7d/24h）")] = None,
+    time_till: Annotated[Union[int, str, None], Field(description="截止时间")] = None,
+    limit: Annotated[Union[int, str, None], Field(description="返回条数（默认10）")] = None,
+    sortfield: Annotated[str, Field(description="排序字段（默认clock）")] = "clock",
+    sortorder: Annotated[str, Field(description="排序方向（DESC/ASC）")] = "DESC"
+) -> str:
+    """获取监控项原始历史数据。长期趋势用trend_get"""
+    return _history_get_impl(get_zabbix_client(), itemids, history, time_from, time_till, limit, sortfield, sortorder)
