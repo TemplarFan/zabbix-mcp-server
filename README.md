@@ -220,7 +220,6 @@ zabbix-mcp-server/
 ├── config/
 │   ├── .env.example            # Environment configuration template
 │   ├── mcp.json                # MCP client configuration example
-│   ├── prompt.md               # Agent system prompt template
 │   └── workflow_prompt.md      # Alarm analysis workflow prompt
 ├── .env.example                # Environment configuration template
 ├── pyproject.toml              # Python project configuration
@@ -307,7 +306,7 @@ Based on [mpeirone/zabbix-mcp-server](https://github.com/mpeirone/zabbix-mcp-ser
 - Operations report generators (daily / weekly / monthly) with unified problem classification
 - Problem fact-checking service (true recovery and manual handling status)
 - Production-only filtering driven by environment configuration
-- Alarm-analysis prompt templates for Dify assistants and n8n workflows
+- Alarm-analysis prompt template for n8n workflows
 - A fully documented 21-tool MCP toolset aligned with the actual implementation
 
 ## Acknowledgments

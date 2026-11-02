@@ -225,3 +225,6 @@ scripts/report/
 # 本地临时文件
 tmp/
 *.log
+
+# 本地专属：Dify 系统提示词（含内网集成，永不推送）
+config/prompt.md

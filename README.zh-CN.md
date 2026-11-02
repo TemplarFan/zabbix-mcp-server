@@ -217,7 +217,6 @@ zabbix-mcp-server/
 ├── config/
 │   ├── .env.example            # 环境配置模板
 │   ├── mcp.json                # MCP 客户端配置示例
-│   ├── prompt.md               # Agent 系统提示词模板
 │   └── workflow_prompt.md      # 告警分析工作流提示词
 ├── .env.example                # 环境配置模板
 ├── pyproject.toml              # Python 项目配置
@@ -304,7 +303,7 @@ uv run python scripts/start_server.py
 - 运维报表生成器（日/周/月），内置统一问题分类
 - 问题事实核查服务（真实恢复与人工处置状态）
 - 由环境配置驱动的生产口径过滤
-- 面向 Dify 助手与 n8n 工作流的告警分析提示词模板
+- 面向 n8n 工作流的告警分析提示词模板
 - 与实际实现完全对齐、文档完备的 21 个 MCP 工具
 
 ## 致谢
